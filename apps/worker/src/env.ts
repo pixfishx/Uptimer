@@ -1,1 +1,3 @@
-export type Env = Record<string, never>;
+export interface Env {
+  DB: D1Database;
+}
