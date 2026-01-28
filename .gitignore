@@ -5,3 +5,22 @@
 /AGENTS.md
 /API-Reference.md
 
+# Dependencies
+node_modules
+
+# Vite / build output
+dist
+build
+
+# Wrangler / Cloudflare
+.wrangler
+.dev.vars
+.env
+.env.*
+
+# Misc
+coverage
+.DS_Store
+npm-debug.log*
+pnpm-debug.log*
+

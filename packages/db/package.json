@@ -1,0 +1,10 @@
+{
+  "name": "@uptimer/db",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "lint": "pnpm -w exec eslint --config eslint.config.mjs packages/db",
+    "typecheck": "pnpm -w exec tsc -p packages/db/tsconfig.json --noEmit"
+  }
+}

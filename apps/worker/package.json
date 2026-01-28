@@ -1,0 +1,20 @@
+{
+  "name": "@uptimer/worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "lint": "pnpm -w exec eslint --config eslint.config.mjs apps/worker",
+    "typecheck": "pnpm -w exec tsc -p apps/worker/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "zod": "^3.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "wrangler": "^4.0.0"
+  }
+}
