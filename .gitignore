@@ -14,7 +14,8 @@ build
 
 # Wrangler / Cloudflare
 .wrangler
-.dev.vars
+.dev.vars*
+!.dev.vars.example
 .env
 .env.*
 
@@ -23,4 +24,3 @@ coverage
 .DS_Store
 npm-debug.log*
 pnpm-debug.log*
-

@@ -7,3 +7,6 @@ binding = "DB"
 database_name = "uptimer"
 # Replace with your real D1 database_id for remote/preview usage.
 database_id = "00000000-0000-0000-0000-000000000000"
+
+# Keep this table even if empty so `wrangler dev` loads secrets/vars from `.dev.vars`.
+[vars]

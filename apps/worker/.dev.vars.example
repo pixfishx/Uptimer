@@ -1,0 +1,4 @@
+# Local development variables for wrangler dev
+# Copy to `.dev.vars` (same directory as `wrangler.toml`) and set a real token.
+ADMIN_TOKEN=change-me
+

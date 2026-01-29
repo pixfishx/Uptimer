@@ -1,18 +1,18 @@
 import { Hono } from 'hono';
 
-import { getDb, monitors } from '@uptimer/db';
-
 import type { Env } from './env';
+import { handleError, handleNotFound } from './middleware/errors';
+import { adminRoutes } from './routes/admin';
+import { publicRoutes } from './routes/public';
 
 const app = new Hono<{ Bindings: Env }>();
 
+app.onError(handleError);
+app.notFound(handleNotFound);
+
 app.get('/', (c) => c.text('ok'));
 
-app.get('/api/v1/public/health', async (c) => {
-  // Minimal DB touch to verify the Worker can connect to D1.
-  const db = getDb(c.env);
-  await db.select({ id: monitors.id }).from(monitors).limit(1).all();
-  return c.json({ ok: true });
-});
+app.route('/api/v1/public', publicRoutes);
+app.route('/api/v1/admin', adminRoutes);
 
 export default app;
