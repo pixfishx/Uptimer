@@ -30,6 +30,10 @@ type Interval = { start: number; end: number };
 const HEARTBEAT_LIMIT = 60;
 const HEARTBEAT_LOOKBACK_SEC = 7 * 24 * 60 * 60;
 
+const STATUS_ACTIVE_INCIDENT_LIMIT = 5;
+const STATUS_ACTIVE_MAINTENANCE_LIMIT = 3;
+const STATUS_UPCOMING_MAINTENANCE_LIMIT = 5;
+
 const latencyRangeSchema = z.enum(['24h']);
 const uptimeRangeSchema = z.enum(['24h', '7d', '30d']);
 
@@ -220,6 +224,199 @@ function p95(values: number[]): number | null {
   return sorted[idx] ?? null;
 }
 
+type IncidentRow = {
+  id: number;
+  title: string;
+  status: string;
+  impact: string;
+  message: string | null;
+  started_at: number;
+  resolved_at: number | null;
+};
+
+type IncidentUpdateRow = {
+  id: number;
+  incident_id: number;
+  status: string | null;
+  message: string;
+  created_at: number;
+};
+
+type IncidentMonitorLinkRow = {
+  incident_id: number;
+  monitor_id: number;
+};
+
+function toIncidentStatus(value: string | null): 'investigating' | 'identified' | 'monitoring' | 'resolved' {
+  switch (value) {
+    case 'investigating':
+    case 'identified':
+    case 'monitoring':
+    case 'resolved':
+      return value;
+    default:
+      return 'investigating';
+  }
+}
+
+function toIncidentImpact(value: string | null): 'none' | 'minor' | 'major' | 'critical' {
+  switch (value) {
+    case 'none':
+    case 'minor':
+    case 'major':
+    case 'critical':
+      return value;
+    default:
+      return 'minor';
+  }
+}
+
+function incidentUpdateRowToApi(row: IncidentUpdateRow) {
+  return {
+    id: row.id,
+    incident_id: row.incident_id,
+    status: row.status === null ? null : toIncidentStatus(row.status),
+    message: row.message,
+    created_at: row.created_at,
+  };
+}
+
+function incidentRowToApi(row: IncidentRow, updates: IncidentUpdateRow[] = [], monitorIds: number[] = []) {
+  return {
+    id: row.id,
+    title: row.title,
+    status: toIncidentStatus(row.status),
+    impact: toIncidentImpact(row.impact),
+    message: row.message,
+    started_at: row.started_at,
+    resolved_at: row.resolved_at,
+    monitor_ids: monitorIds,
+    updates: updates.map(incidentUpdateRowToApi),
+  };
+}
+
+async function listIncidentUpdatesByIncidentId(
+  db: D1Database,
+  incidentIds: number[]
+): Promise<Map<number, IncidentUpdateRow[]>> {
+  const byIncident = new Map<number, IncidentUpdateRow[]>();
+  if (incidentIds.length === 0) return byIncident;
+
+  const placeholders = incidentIds.map((_, idx) => `?${idx + 1}`).join(', ');
+  const sql = `
+    SELECT id, incident_id, status, message, created_at
+    FROM incident_updates
+    WHERE incident_id IN (${placeholders})
+    ORDER BY incident_id, created_at, id
+  `;
+
+  const { results } = await db.prepare(sql).bind(...incidentIds).all<IncidentUpdateRow>();
+  for (const r of results ?? []) {
+    const existing = byIncident.get(r.incident_id) ?? [];
+    existing.push(r);
+    byIncident.set(r.incident_id, existing);
+  }
+
+  return byIncident;
+}
+
+type MaintenanceWindowRow = {
+  id: number;
+  title: string;
+  message: string | null;
+  starts_at: number;
+  ends_at: number;
+  created_at: number;
+};
+
+type MaintenanceWindowMonitorLinkRow = {
+  maintenance_window_id: number;
+  monitor_id: number;
+};
+
+function maintenanceWindowRowToApi(row: MaintenanceWindowRow, monitorIds: number[] = []) {
+  return {
+    id: row.id,
+    title: row.title,
+    message: row.message,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    created_at: row.created_at,
+    monitor_ids: monitorIds,
+  };
+}
+
+async function listIncidentMonitorIdsByIncidentId(
+  db: D1Database,
+  incidentIds: number[]
+): Promise<Map<number, number[]>> {
+  const byIncident = new Map<number, number[]>();
+  if (incidentIds.length === 0) return byIncident;
+
+  const placeholders = incidentIds.map((_, idx) => `?${idx + 1}`).join(', ');
+  const sql = `
+    SELECT incident_id, monitor_id
+    FROM incident_monitors
+    WHERE incident_id IN (${placeholders})
+    ORDER BY incident_id, monitor_id
+  `;
+
+  const { results } = await db.prepare(sql).bind(...incidentIds).all<IncidentMonitorLinkRow>();
+  for (const r of results ?? []) {
+    const existing = byIncident.get(r.incident_id) ?? [];
+    existing.push(r.monitor_id);
+    byIncident.set(r.incident_id, existing);
+  }
+
+  return byIncident;
+}
+
+async function listMaintenanceWindowMonitorIdsByWindowId(
+  db: D1Database,
+  windowIds: number[]
+): Promise<Map<number, number[]>> {
+  const byWindow = new Map<number, number[]>();
+  if (windowIds.length === 0) return byWindow;
+
+  const placeholders = windowIds.map((_, idx) => `?${idx + 1}`).join(', ');
+  const sql = `
+    SELECT maintenance_window_id, monitor_id
+    FROM maintenance_window_monitors
+    WHERE maintenance_window_id IN (${placeholders})
+    ORDER BY maintenance_window_id, monitor_id
+  `;
+
+  const { results } = await db.prepare(sql).bind(...windowIds).all<MaintenanceWindowMonitorLinkRow>();
+  for (const r of results ?? []) {
+    const existing = byWindow.get(r.maintenance_window_id) ?? [];
+    existing.push(r.monitor_id);
+    byWindow.set(r.maintenance_window_id, existing);
+  }
+
+  return byWindow;
+}
+
+async function listActiveMaintenanceMonitorIds(
+  db: D1Database,
+  at: number,
+  monitorIds: number[]
+): Promise<Set<number>> {
+  const ids = [...new Set(monitorIds)];
+  if (ids.length === 0) return new Set();
+
+  const placeholders = ids.map((_, idx) => `?${idx + 2}`).join(', ');
+  const sql = `
+    SELECT DISTINCT mwm.monitor_id
+    FROM maintenance_window_monitors mwm
+    JOIN maintenance_windows mw ON mw.id = mwm.maintenance_window_id
+    WHERE mw.starts_at <= ?1 AND mw.ends_at > ?1
+      AND mwm.monitor_id IN (${placeholders})
+  `;
+
+  const { results } = await db.prepare(sql).bind(at, ...ids).all<{ monitor_id: number }>();
+  return new Set((results ?? []).map((r) => r.monitor_id));
+}
+
 publicRoutes.get('/status', async (c) => {
   const now = Math.floor(Date.now() / 1000);
   const rangeEnd = Math.floor(now / 60) * 60;
@@ -242,19 +439,24 @@ publicRoutes.get('/status', async (c) => {
     `
   ).all<PublicStatusMonitorRow>();
 
-  const monitorsList = (results ?? []).map((r) => {
+  const rawMonitors = results ?? [];
+  const rawIds = rawMonitors.map((m) => m.id);
+  const maintenanceMonitorIds = await listActiveMaintenanceMonitorIds(c.env.DB, now, rawIds);
+
+  const monitorsList = rawMonitors.map((r) => {
+    const isInMaintenance = maintenanceMonitorIds.has(r.id);
     const stateStatus = toMonitorStatus(r.state_status);
 
     // Paused/maintenance are operator-enforced; they should not degrade to "stale/unknown"
     // just because the scheduler isn't (or shouldn't be) running checks.
     const isStale =
-      stateStatus === 'paused' || stateStatus === 'maintenance'
+      isInMaintenance || stateStatus === 'paused' || stateStatus === 'maintenance'
         ? false
         : r.last_checked_at === null
           ? true
           : now - r.last_checked_at > r.interval_sec * 2;
 
-    const status = isStale ? 'unknown' : stateStatus;
+    const status = isInMaintenance ? 'maintenance' : isStale ? 'unknown' : stateStatus;
 
     return {
       id: r.id,
@@ -327,11 +529,228 @@ publicRoutes.get('/status', async (c) => {
     }
   }
 
+  const { results: activeIncidents } = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE status != 'resolved'
+      ORDER BY started_at DESC, id DESC
+      LIMIT ?1
+    `
+  )
+    .bind(STATUS_ACTIVE_INCIDENT_LIMIT)
+    .all<IncidentRow>();
+
+  const activeIncidentRows = activeIncidents ?? [];
+  const incidentMonitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(
+    c.env.DB,
+    activeIncidentRows.map((r) => r.id)
+  );
+
+  const { results: activeMaintenanceWindows } = await c.env.DB.prepare(
+    `
+      SELECT id, title, message, starts_at, ends_at, created_at
+      FROM maintenance_windows
+      WHERE starts_at <= ?1 AND ends_at > ?1
+      ORDER BY starts_at ASC, id ASC
+      LIMIT ?2
+    `
+  )
+    .bind(now, STATUS_ACTIVE_MAINTENANCE_LIMIT)
+    .all<MaintenanceWindowRow>();
+
+  const activeWindowRows = activeMaintenanceWindows ?? [];
+  const activeWindowMonitorIdsByWindowId = await listMaintenanceWindowMonitorIdsByWindowId(
+    c.env.DB,
+    activeWindowRows.map((w) => w.id)
+  );
+
+  const { results: upcomingMaintenanceWindows } = await c.env.DB.prepare(
+    `
+      SELECT id, title, message, starts_at, ends_at, created_at
+      FROM maintenance_windows
+      WHERE starts_at > ?1
+      ORDER BY starts_at ASC, id ASC
+      LIMIT ?2
+    `
+  )
+    .bind(now, STATUS_UPCOMING_MAINTENANCE_LIMIT)
+    .all<MaintenanceWindowRow>();
+
+  const upcomingWindowRows = upcomingMaintenanceWindows ?? [];
+  const upcomingWindowMonitorIdsByWindowId = await listMaintenanceWindowMonitorIdsByWindowId(
+    c.env.DB,
+    upcomingWindowRows.map((w) => w.id)
+  );
+
+  // Status page banner rule (Application.md 11): incidents (manual) > monitor aggregation (DOWN wins) > maintenance.
+  const banner = (() => {
+    const incidents = activeIncidentRows;
+    if (incidents.length > 0) {
+      const impactRank = (impact: ReturnType<typeof toIncidentImpact>) => {
+        switch (impact) {
+          case 'critical':
+            return 3;
+          case 'major':
+            return 2;
+          case 'minor':
+            return 1;
+          case 'none':
+          default:
+            return 0;
+        }
+      };
+
+      const maxImpact = incidents
+        .map((it) => toIncidentImpact(it.impact))
+        .reduce((acc, it) => (impactRank(it) > impactRank(acc) ? it : acc), 'none' as const);
+
+      const status =
+        maxImpact === 'critical' || maxImpact === 'major'
+          ? 'major_outage'
+          : maxImpact === 'minor'
+            ? 'partial_outage'
+            : 'operational';
+
+      const title = status === 'major_outage' ? 'Major Outage' : status === 'partial_outage' ? 'Partial Outage' : 'Incident';
+
+      const top = incidents[0];
+      return {
+        source: 'incident',
+        status,
+        title,
+        incident: top ? { id: top.id, title: top.title, status: toIncidentStatus(top.status), impact: toIncidentImpact(top.impact) } : null,
+      };
+    }
+
+    const total = monitorsList.length;
+    const downRatio = total === 0 ? 0 : counts.down / total;
+
+    if (counts.down > 0) {
+      const status = downRatio >= 0.3 ? 'major_outage' : 'partial_outage';
+      return {
+        source: 'monitors',
+        status,
+        title: status === 'major_outage' ? 'Major Outage' : 'Partial Outage',
+        down_ratio: downRatio,
+      };
+    }
+
+    if (counts.unknown > 0) {
+      return { source: 'monitors', status: 'unknown', title: 'Status Unknown' };
+    }
+
+    const maint = activeWindowRows;
+    const hasMaintenance = maint.length > 0 || counts.maintenance > 0;
+    if (hasMaintenance) {
+      const top = maint[0];
+      return top
+        ? {
+            source: 'maintenance',
+            status: 'maintenance',
+            title: 'Maintenance',
+            maintenance_window: { id: top.id, title: top.title, starts_at: top.starts_at, ends_at: top.ends_at },
+          }
+        : { source: 'monitors', status: 'maintenance', title: 'Maintenance' };
+    }
+
+    return { source: 'monitors', status: 'operational', title: 'All Systems Operational' };
+  })();
+
   return c.json({
     generated_at: now,
     overall_status,
+    banner,
     summary: counts,
     monitors: monitorsList,
+    active_incidents: activeIncidentRows.map((r) => incidentRowToApi(r, [], incidentMonitorIdsByIncidentId.get(r.id) ?? [])),
+    maintenance_windows: {
+      active: activeWindowRows.map((w) =>
+        maintenanceWindowRowToApi(w, activeWindowMonitorIdsByWindowId.get(w.id) ?? [])
+      ),
+      upcoming: upcomingWindowRows.map((w) =>
+        maintenanceWindowRowToApi(w, upcomingWindowMonitorIdsByWindowId.get(w.id) ?? [])
+      ),
+    },
+  });
+});
+
+publicRoutes.get('/incidents', async (c) => {
+  const limit = z.coerce.number().int().min(1).max(200).optional().default(20).parse(c.req.query('limit'));
+  const cursor = z.coerce.number().int().positive().optional().parse(c.req.query('cursor'));
+
+  const { results: activeRows } = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE status != 'resolved'
+      ORDER BY started_at DESC, id DESC
+      LIMIT ?1
+    `
+  )
+    .bind(limit)
+    .all<IncidentRow>();
+
+  const active = activeRows ?? [];
+  const remaining = Math.max(0, limit - active.length);
+
+  let resolved: IncidentRow[] = [];
+  let next_cursor: number | null = null;
+
+  if (remaining > 0) {
+    const resolvedLimitPlusOne = remaining + 1;
+
+    const baseSql = `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE status = 'resolved'
+    `;
+
+    const { results: resolvedRows } = cursor
+      ? await c.env.DB.prepare(
+          `
+            ${baseSql}
+              AND id < ?2
+            ORDER BY id DESC
+            LIMIT ?1
+          `
+        )
+          .bind(resolvedLimitPlusOne, cursor)
+          .all<IncidentRow>()
+      : await c.env.DB.prepare(
+          `
+            ${baseSql}
+            ORDER BY id DESC
+            LIMIT ?1
+          `
+        )
+          .bind(resolvedLimitPlusOne)
+          .all<IncidentRow>();
+
+    const allResolved = resolvedRows ?? [];
+    resolved = allResolved.slice(0, remaining);
+
+    if (allResolved.length > remaining) {
+      const last = resolved[resolved.length - 1];
+      next_cursor = last ? last.id : null;
+    }
+  }
+
+  const combined = [...active, ...resolved];
+  const updatesByIncidentId = await listIncidentUpdatesByIncidentId(
+    c.env.DB,
+    combined.map((r) => r.id)
+  );
+  const monitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(
+    c.env.DB,
+    combined.map((r) => r.id)
+  );
+
+  return c.json({
+    incidents: combined.map((r) =>
+      incidentRowToApi(r, updatesByIncidentId.get(r.id) ?? [], monitorIdsByIncidentId.get(r.id) ?? [])
+    ),
+    next_cursor,
   });
 });
 

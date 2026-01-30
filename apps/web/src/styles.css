@@ -5,3 +5,31 @@
 body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
+
+.markdown-preview p + p {
+  margin-top: 0.75rem;
+}
+
+.markdown-preview ul,
+.markdown-preview ol {
+  margin-top: 0.5rem;
+  margin-left: 1.25rem;
+}
+
+.markdown-preview ul {
+  list-style: disc;
+}
+
+.markdown-preview ol {
+  list-style: decimal;
+}
+
+.markdown-preview a {
+  color: rgb(37 99 235);
+  text-decoration: underline;
+}
+
+.markdown-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.875em;
+}

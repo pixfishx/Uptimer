@@ -1,13 +1,23 @@
 import type {
   AdminMonitor,
+  AdminIncidentsResponse,
   CreateMonitorInput,
+  CreateIncidentInput,
+  CreateIncidentUpdateInput,
   CreateNotificationChannelInput,
+  CreateMaintenanceWindowInput,
   LatencyResponse,
+  MaintenanceWindow,
   MonitorTestResult,
+  Incident,
+  IncidentUpdate,
   NotificationChannel,
   NotificationChannelTestResult,
+  PatchMaintenanceWindowInput,
   PatchMonitorInput,
   PatchNotificationChannelInput,
+  PublicIncidentsResponse,
+  ResolveIncidentInput,
   StatusResponse,
   UptimeResponse,
 } from './types';
@@ -136,4 +146,100 @@ export async function testNotificationChannel(id: number): Promise<NotificationC
     headers: getAuthHeaders(),
   });
   return handleResponse<NotificationChannelTestResult>(res);
+}
+
+// Public API - Incidents
+export async function fetchPublicIncidents(limit = 20, cursor?: number): Promise<PublicIncidentsResponse> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (cursor) qs.set('cursor', String(cursor));
+  const res = await fetch(`${API_BASE}/public/incidents?${qs.toString()}`);
+  return handleResponse<PublicIncidentsResponse>(res);
+}
+
+// Admin API - Incidents
+export async function fetchAdminIncidents(limit = 50): Promise<AdminIncidentsResponse> {
+  const res = await fetch(`${API_BASE}/admin/incidents?limit=${limit}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<AdminIncidentsResponse>(res);
+}
+
+export async function createIncident(input: CreateIncidentInput): Promise<{ incident: Incident }> {
+  const res = await fetch(`${API_BASE}/admin/incidents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<{ incident: Incident }>(res);
+}
+
+export async function addIncidentUpdate(
+  id: number,
+  input: CreateIncidentUpdateInput,
+): Promise<{ incident: Incident; update: IncidentUpdate }> {
+  const res = await fetch(`${API_BASE}/admin/incidents/${id}/updates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<{ incident: Incident; update: IncidentUpdate }>(res);
+}
+
+export async function resolveIncident(
+  id: number,
+  input: ResolveIncidentInput,
+): Promise<{ incident: Incident; update?: IncidentUpdate }> {
+  const res = await fetch(`${API_BASE}/admin/incidents/${id}/resolve`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<{ incident: Incident; update?: IncidentUpdate }>(res);
+}
+
+export async function deleteIncident(id: number): Promise<{ deleted: boolean }> {
+  const res = await fetch(`${API_BASE}/admin/incidents/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<{ deleted: boolean }>(res);
+}
+
+// Admin API - Maintenance Windows
+export async function fetchMaintenanceWindows(limit = 50): Promise<{ maintenance_windows: MaintenanceWindow[] }> {
+  const res = await fetch(`${API_BASE}/admin/maintenance-windows?limit=${limit}`, {
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<{ maintenance_windows: MaintenanceWindow[] }>(res);
+}
+
+export async function createMaintenanceWindow(
+  input: CreateMaintenanceWindowInput,
+): Promise<{ maintenance_window: MaintenanceWindow }> {
+  const res = await fetch(`${API_BASE}/admin/maintenance-windows`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<{ maintenance_window: MaintenanceWindow }>(res);
+}
+
+export async function updateMaintenanceWindow(
+  id: number,
+  input: PatchMaintenanceWindowInput,
+): Promise<{ maintenance_window: MaintenanceWindow }> {
+  const res = await fetch(`${API_BASE}/admin/maintenance-windows/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(input),
+  });
+  return handleResponse<{ maintenance_window: MaintenanceWindow }>(res);
+}
+
+export async function deleteMaintenanceWindow(id: number): Promise<{ deleted: boolean }> {
+  const res = await fetch(`${API_BASE}/admin/maintenance-windows/${id}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<{ deleted: boolean }>(res);
 }

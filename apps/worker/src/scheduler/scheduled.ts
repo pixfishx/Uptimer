@@ -73,20 +73,25 @@ async function listActiveWebhookChannels(db: D1Database): Promise<WebhookChannel
   }));
 }
 
-async function isMaintenanceSuppressed(db: D1Database, at: number): Promise<boolean> {
-  const row = await db
-    .prepare(
-      `
-      SELECT 1 AS one
-      FROM maintenance_windows
-      WHERE starts_at <= ?1 AND ends_at > ?1
-      LIMIT 1
-    `
-    )
-    .bind(at)
-    .first<{ one: number }>();
+async function listMaintenanceSuppressedMonitorIds(
+  db: D1Database,
+  at: number,
+  monitorIds: number[]
+): Promise<Set<number>> {
+  const ids = [...new Set(monitorIds)];
+  if (ids.length === 0) return new Set();
 
-  return !!row;
+  const placeholders = ids.map((_, idx) => `?${idx + 2}`).join(', ');
+  const sql = `
+    SELECT DISTINCT mwm.monitor_id
+    FROM maintenance_window_monitors mwm
+    JOIN maintenance_windows mw ON mw.id = mwm.maintenance_window_id
+    WHERE mw.starts_at <= ?1 AND mw.ends_at > ?1
+      AND mwm.monitor_id IN (${placeholders})
+  `;
+
+  const { results } = await db.prepare(sql).bind(at, ...ids).all<{ monitor_id: number }>();
+  return new Set((results ?? []).map((r) => r.monitor_id));
 }
 
 function toHttpMethod(
@@ -283,7 +288,8 @@ async function runDueMonitor(
   env: Env,
   row: DueMonitorRow,
   checkedAt: number,
-  notify: NotifyContext | null
+  notify: NotifyContext | null,
+  maintenanceSuppressed: boolean
 ): Promise<void> {
   const prevStatus = toMonitorStatus(row.state_status);
   const prev: MonitorStateSnapshot | null =
@@ -367,7 +373,7 @@ async function runDueMonitor(
     stateLastError
   );
 
-  if (!notify || !next.changed) {
+  if (!notify || maintenanceSuppressed || !next.changed) {
     return;
   }
 
@@ -433,16 +439,21 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
     return;
   }
 
-  // Maintenance windows are defined in unix seconds; suppress notifications based on current time.
-  const maintenanceSuppressed = await isMaintenanceSuppressed(env.DB, now);
-  const channels = maintenanceSuppressed ? [] : await listActiveWebhookChannels(env.DB);
+  const channels = await listActiveWebhookChannels(env.DB);
   const notify: NotifyContext | null =
-    maintenanceSuppressed || channels.length === 0
-      ? null
-      : { ctx, envRecord: env as unknown as Record<string, unknown>, channels };
+    channels.length === 0 ? null : { ctx, envRecord: env as unknown as Record<string, unknown>, channels };
+
+  // Maintenance suppression is monitor-scoped.
+  const suppressedMonitorIds = await listMaintenanceSuppressedMonitorIds(
+    env.DB,
+    now,
+    due.map((m) => m.id)
+  );
 
   const limit = pLimit(CHECK_CONCURRENCY);
-  const settled = await Promise.allSettled(due.map((m) => limit(() => runDueMonitor(env, m, checkedAt, notify))));
+  const settled = await Promise.allSettled(
+    due.map((m) => limit(() => runDueMonitor(env, m, checkedAt, notify, suppressedMonitorIds.has(m.id))))
+  );
 
   const rejected = settled.filter((r) => r.status === 'rejected');
   if (rejected.length > 0) {

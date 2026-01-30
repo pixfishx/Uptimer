@@ -20,7 +20,16 @@ import { AppError } from '../middleware/errors';
 import { runHttpCheck } from '../monitor/http';
 import { validateHttpTarget, validateTcpTarget } from '../monitor/targets';
 import { runTcpCheck } from '../monitor/tcp';
-import { dispatchWebhookToChannel } from '../notify/webhook';
+import { dispatchWebhookToChannel, dispatchWebhookToChannels, type WebhookChannel } from '../notify/webhook';
+import {
+  createIncidentInputSchema,
+  createIncidentUpdateInputSchema,
+  resolveIncidentInputSchema,
+} from '../schemas/incidents';
+import {
+  createMaintenanceWindowInputSchema,
+  patchMaintenanceWindowInputSchema,
+} from '../schemas/maintenance-windows';
 import { createMonitorInputSchema, patchMonitorInputSchema } from '../schemas/monitors';
 import {
   createNotificationChannelInputSchema,
@@ -366,6 +375,239 @@ type NotificationDeliveryRow = {
   created_at: number;
 };
 
+type ActiveWebhookChannelRow = {
+  id: number;
+  name: string;
+  config_json: string;
+};
+
+async function listActiveWebhookChannels(db: D1Database): Promise<WebhookChannel[]> {
+  const { results } = await db
+    .prepare(
+      `
+      SELECT id, name, config_json
+      FROM notification_channels
+      WHERE is_active = 1 AND type = 'webhook'
+      ORDER BY id
+    `
+    )
+    .all<ActiveWebhookChannelRow>();
+
+  return (results ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    config: parseDbJson(webhookChannelConfigSchema, r.config_json, { field: 'config_json' }),
+  }));
+}
+
+function normalizeIdList(ids: number[]): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const id of ids) {
+    if (!Number.isFinite(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+async function ensureMonitorsExist(db: D1Database, monitorIds: number[]): Promise<void> {
+  const ids = normalizeIdList(monitorIds);
+  if (ids.length === 0) {
+    throw new AppError(400, 'INVALID_ARGUMENT', '`monitor_ids` must contain at least one monitor id');
+  }
+
+  const placeholders = ids.map((_, idx) => `?${idx + 1}`).join(', ');
+  const { results } = await db
+    .prepare(
+      `
+        SELECT id
+        FROM monitors
+        WHERE id IN (${placeholders})
+      `
+    )
+    .bind(...ids)
+    .all<{ id: number }>();
+
+  const found = new Set((results ?? []).map((r) => r.id));
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    throw new AppError(400, 'INVALID_ARGUMENT', `Monitor(s) not found: ${missing.join(', ')}`);
+  }
+}
+
+type IncidentRow = {
+  id: number;
+  title: string;
+  status: string;
+  impact: string;
+  message: string | null;
+  started_at: number;
+  resolved_at: number | null;
+};
+
+type IncidentUpdateRow = {
+  id: number;
+  incident_id: number;
+  status: string | null;
+  message: string;
+  created_at: number;
+};
+
+type IncidentMonitorLinkRow = {
+  incident_id: number;
+  monitor_id: number;
+};
+
+function toIncidentStatus(value: string | null): 'investigating' | 'identified' | 'monitoring' | 'resolved' {
+  switch (value) {
+    case 'investigating':
+    case 'identified':
+    case 'monitoring':
+    case 'resolved':
+      return value;
+    default:
+      return 'investigating';
+  }
+}
+
+function toIncidentImpact(value: string | null): 'none' | 'minor' | 'major' | 'critical' {
+  switch (value) {
+    case 'none':
+    case 'minor':
+    case 'major':
+    case 'critical':
+      return value;
+    default:
+      return 'minor';
+  }
+}
+
+function incidentUpdateRowToApi(row: IncidentUpdateRow) {
+  return {
+    id: row.id,
+    incident_id: row.incident_id,
+    status: row.status === null ? null : toIncidentStatus(row.status),
+    message: row.message,
+    created_at: row.created_at,
+  };
+}
+
+function incidentRowToApi(row: IncidentRow, updates: IncidentUpdateRow[] = [], monitorIds: number[] = []) {
+  return {
+    id: row.id,
+    title: row.title,
+    status: toIncidentStatus(row.status),
+    impact: toIncidentImpact(row.impact),
+    message: row.message,
+    started_at: row.started_at,
+    resolved_at: row.resolved_at,
+    monitor_ids: monitorIds,
+    updates: updates.map(incidentUpdateRowToApi),
+  };
+}
+
+async function listIncidentUpdatesByIncidentId(
+  db: D1Database,
+  incidentIds: number[]
+): Promise<Map<number, IncidentUpdateRow[]>> {
+  const byIncident = new Map<number, IncidentUpdateRow[]>();
+  if (incidentIds.length === 0) return byIncident;
+
+  const placeholders = incidentIds.map((_, idx) => `?${idx + 1}`).join(', ');
+  const sql = `
+    SELECT id, incident_id, status, message, created_at
+    FROM incident_updates
+    WHERE incident_id IN (${placeholders})
+    ORDER BY incident_id, created_at, id
+  `;
+
+  const { results } = await db.prepare(sql).bind(...incidentIds).all<IncidentUpdateRow>();
+  for (const r of results ?? []) {
+    const existing = byIncident.get(r.incident_id) ?? [];
+    existing.push(r);
+    byIncident.set(r.incident_id, existing);
+  }
+  return byIncident;
+}
+
+async function listIncidentMonitorIdsByIncidentId(
+  db: D1Database,
+  incidentIds: number[]
+): Promise<Map<number, number[]>> {
+  const byIncident = new Map<number, number[]>();
+  if (incidentIds.length === 0) return byIncident;
+
+  const placeholders = incidentIds.map((_, idx) => `?${idx + 1}`).join(', ');
+  const sql = `
+    SELECT incident_id, monitor_id
+    FROM incident_monitors
+    WHERE incident_id IN (${placeholders})
+    ORDER BY incident_id, monitor_id
+  `;
+
+  const { results } = await db.prepare(sql).bind(...incidentIds).all<IncidentMonitorLinkRow>();
+  for (const r of results ?? []) {
+    const existing = byIncident.get(r.incident_id) ?? [];
+    existing.push(r.monitor_id);
+    byIncident.set(r.incident_id, existing);
+  }
+
+  return byIncident;
+}
+
+type MaintenanceWindowRow = {
+  id: number;
+  title: string;
+  message: string | null;
+  starts_at: number;
+  ends_at: number;
+  created_at: number;
+};
+
+type MaintenanceWindowMonitorLinkRow = {
+  maintenance_window_id: number;
+  monitor_id: number;
+};
+
+function maintenanceWindowRowToApi(row: MaintenanceWindowRow, monitorIds: number[] = []) {
+  return {
+    id: row.id,
+    title: row.title,
+    message: row.message,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    created_at: row.created_at,
+    monitor_ids: monitorIds,
+  };
+}
+
+async function listMaintenanceWindowMonitorIdsByWindowId(
+  db: D1Database,
+  windowIds: number[]
+): Promise<Map<number, number[]>> {
+  const byWindow = new Map<number, number[]>();
+  if (windowIds.length === 0) return byWindow;
+
+  const placeholders = windowIds.map((_, idx) => `?${idx + 1}`).join(', ');
+  const sql = `
+    SELECT maintenance_window_id, monitor_id
+    FROM maintenance_window_monitors
+    WHERE maintenance_window_id IN (${placeholders})
+    ORDER BY maintenance_window_id, monitor_id
+  `;
+
+  const { results } = await db.prepare(sql).bind(...windowIds).all<MaintenanceWindowMonitorLinkRow>();
+  for (const r of results ?? []) {
+    const existing = byWindow.get(r.maintenance_window_id) ?? [];
+    existing.push(r.monitor_id);
+    byWindow.set(r.maintenance_window_id, existing);
+  }
+
+  return byWindow;
+}
+
 adminRoutes.post('/notification-channels/:id/test', async (c) => {
   const id = z.coerce.number().int().positive().parse(c.req.param('id'));
 
@@ -423,4 +665,513 @@ adminRoutes.post('/notification-channels/:id/test', async (c) => {
         }
       : null,
   });
+});
+
+adminRoutes.get('/incidents', async (c) => {
+  const limit = z.coerce.number().int().min(1).max(200).optional().default(50).parse(c.req.query('limit'));
+
+  const { results: incidentRows } = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      ORDER BY
+        CASE WHEN status != 'resolved' THEN 0 ELSE 1 END,
+        started_at DESC,
+        id DESC
+      LIMIT ?1
+    `
+  )
+    .bind(limit)
+    .all<IncidentRow>();
+
+  const incidentsList = incidentRows ?? [];
+  const monitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(
+    c.env.DB,
+    incidentsList.map((r) => r.id)
+  );
+  const updatesByIncidentId = await listIncidentUpdatesByIncidentId(
+    c.env.DB,
+    incidentsList.map((r) => r.id)
+  );
+
+  return c.json({
+    incidents: incidentsList.map((r) =>
+      incidentRowToApi(r, updatesByIncidentId.get(r.id) ?? [], monitorIdsByIncidentId.get(r.id) ?? [])
+    ),
+  });
+});
+
+adminRoutes.post('/incidents', async (c) => {
+  const rawBody = await c.req.json().catch(() => {
+    throw new AppError(400, 'INVALID_ARGUMENT', 'Invalid JSON body');
+  });
+  const input = createIncidentInputSchema.parse(rawBody);
+
+  const now = Math.floor(Date.now() / 1000);
+  const startedAt = input.started_at ?? now;
+  if (startedAt > now) {
+    throw new AppError(400, 'INVALID_ARGUMENT', '`started_at` cannot be in the future');
+  }
+
+  const monitorIds = normalizeIdList(input.monitor_ids);
+  await ensureMonitorsExist(c.env.DB, monitorIds);
+
+  const row = await c.env.DB.prepare(
+    `
+      INSERT INTO incidents (title, status, impact, message, started_at, resolved_at)
+      VALUES (?1, ?2, ?3, ?4, ?5, NULL)
+      RETURNING id, title, status, impact, message, started_at, resolved_at
+    `
+  )
+    .bind(input.title, input.status, input.impact, input.message ?? null, startedAt)
+    .first<IncidentRow>();
+
+  if (!row) {
+    throw new AppError(500, 'INTERNAL', 'Failed to create incident');
+  }
+
+  const linkStatements = monitorIds.map((monitorId) =>
+    c.env.DB.prepare(
+      `
+        INSERT INTO incident_monitors (incident_id, monitor_id, created_at)
+        VALUES (?1, ?2, ?3)
+      `
+    ).bind(row.id, monitorId, now)
+  );
+  if (linkStatements.length > 0) {
+    await c.env.DB.batch(linkStatements);
+  }
+
+  const channels = await listActiveWebhookChannels(c.env.DB);
+  if (channels.length > 0) {
+    const eventKey = `incident:${row.id}:created:${startedAt}`;
+    const payload = {
+      event: 'incident.created',
+      event_id: eventKey,
+      timestamp: now,
+      incident: incidentRowToApi(row, [], monitorIds),
+    };
+
+    await dispatchWebhookToChannels({
+      db: c.env.DB,
+      env: c.env as unknown as Record<string, unknown>,
+      channels,
+      eventKey,
+      payload,
+    });
+  }
+
+  return c.json({ incident: incidentRowToApi(row, [], monitorIds) }, 201);
+});
+
+adminRoutes.post('/incidents/:id/updates', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const rawBody = await c.req.json().catch(() => {
+    throw new AppError(400, 'INVALID_ARGUMENT', 'Invalid JSON body');
+  });
+  const input = createIncidentUpdateInputSchema.parse(rawBody);
+
+  const existing = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<IncidentRow>();
+
+  if (!existing) {
+    throw new AppError(404, 'NOT_FOUND', 'Incident not found');
+  }
+  if (existing.status === 'resolved') {
+    throw new AppError(409, 'CONFLICT', 'Incident already resolved');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const monitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(c.env.DB, [id]);
+  const monitorIds = monitorIdsByIncidentId.get(id) ?? [];
+
+  const updateRow = await c.env.DB.prepare(
+    `
+      INSERT INTO incident_updates (incident_id, status, message, created_at)
+      VALUES (?1, ?2, ?3, ?4)
+      RETURNING id, incident_id, status, message, created_at
+    `
+  )
+    .bind(id, input.status ?? null, input.message, now)
+    .first<IncidentUpdateRow>();
+
+  if (!updateRow) {
+    throw new AppError(500, 'INTERNAL', 'Failed to create incident update');
+  }
+
+  if (input.status) {
+    await c.env.DB.prepare(
+      `
+        UPDATE incidents
+        SET status = ?1
+        WHERE id = ?2
+      `
+    )
+      .bind(input.status, id)
+      .run();
+  }
+
+  const incidentRow = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<IncidentRow>();
+
+  if (!incidentRow) {
+    throw new AppError(500, 'INTERNAL', 'Incident missing after update');
+  }
+
+  const channels = await listActiveWebhookChannels(c.env.DB);
+  if (channels.length > 0) {
+    const eventKey = `incident:${id}:update:${updateRow.id}`;
+    const payload = {
+      event: 'incident.updated',
+      event_id: eventKey,
+      timestamp: now,
+      incident: incidentRowToApi(incidentRow, [], monitorIds),
+      update: incidentUpdateRowToApi(updateRow),
+    };
+
+    await dispatchWebhookToChannels({
+      db: c.env.DB,
+      env: c.env as unknown as Record<string, unknown>,
+      channels,
+      eventKey,
+      payload,
+    });
+  }
+
+  return c.json({
+    incident: incidentRowToApi(incidentRow, [], monitorIds),
+    update: incidentUpdateRowToApi(updateRow),
+  });
+});
+
+adminRoutes.patch('/incidents/:id/resolve', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const rawBody = await c.req.json().catch(() => {
+    throw new AppError(400, 'INVALID_ARGUMENT', 'Invalid JSON body');
+  });
+  const input = resolveIncidentInputSchema.parse(rawBody);
+
+  const existing = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<IncidentRow>();
+
+  if (!existing) {
+    throw new AppError(404, 'NOT_FOUND', 'Incident not found');
+  }
+  if (existing.status === 'resolved') {
+    const monitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(c.env.DB, [id]);
+    const monitorIds = monitorIdsByIncidentId.get(id) ?? [];
+    return c.json({ incident: incidentRowToApi(existing, [], monitorIds) });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const monitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(c.env.DB, [id]);
+  const monitorIds = monitorIdsByIncidentId.get(id) ?? [];
+
+  await c.env.DB.prepare(
+    `
+      UPDATE incidents
+      SET status = 'resolved', resolved_at = ?1
+      WHERE id = ?2
+    `
+  )
+    .bind(now, id)
+    .run();
+
+  const message = input.message ?? 'Resolved';
+  const updateRow = await c.env.DB.prepare(
+    `
+      INSERT INTO incident_updates (incident_id, status, message, created_at)
+      VALUES (?1, 'resolved', ?2, ?3)
+      RETURNING id, incident_id, status, message, created_at
+    `
+  )
+    .bind(id, message, now)
+    .first<IncidentUpdateRow>();
+
+  if (!updateRow) {
+    throw new AppError(500, 'INTERNAL', 'Failed to create incident resolution update');
+  }
+
+  const incidentRow = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<IncidentRow>();
+
+  if (!incidentRow) {
+    throw new AppError(500, 'INTERNAL', 'Incident missing after resolve');
+  }
+
+  const channels = await listActiveWebhookChannels(c.env.DB);
+  if (channels.length > 0) {
+    const eventKey = `incident:${id}:resolved:${updateRow.id}`;
+    const payload = {
+      event: 'incident.resolved',
+      event_id: eventKey,
+      timestamp: now,
+      incident: incidentRowToApi(incidentRow, [], monitorIds),
+      update: incidentUpdateRowToApi(updateRow),
+    };
+
+    await dispatchWebhookToChannels({
+      db: c.env.DB,
+      env: c.env as unknown as Record<string, unknown>,
+      channels,
+      eventKey,
+      payload,
+    });
+  }
+
+  return c.json({
+    incident: incidentRowToApi(incidentRow, [], monitorIds),
+    update: incidentUpdateRowToApi(updateRow),
+  });
+});
+
+adminRoutes.delete('/incidents/:id', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const existing = await c.env.DB.prepare(
+    `
+      SELECT id, title, status, impact, message, started_at, resolved_at
+      FROM incidents
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<IncidentRow>();
+
+  if (!existing) {
+    throw new AppError(404, 'NOT_FOUND', 'Incident not found');
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `
+        DELETE FROM incident_updates
+        WHERE incident_id = ?1
+      `
+    ).bind(id),
+    c.env.DB.prepare(
+      `
+        DELETE FROM incident_monitors
+        WHERE incident_id = ?1
+      `
+    ).bind(id),
+    c.env.DB.prepare(
+      `
+        DELETE FROM incidents
+        WHERE id = ?1
+      `
+    ).bind(id),
+  ]);
+
+  return c.json({ deleted: true });
+});
+
+adminRoutes.get('/maintenance-windows', async (c) => {
+  const limit = z.coerce.number().int().min(1).max(200).optional().default(50).parse(c.req.query('limit'));
+
+  const { results } = await c.env.DB.prepare(
+    `
+      SELECT id, title, message, starts_at, ends_at, created_at
+      FROM maintenance_windows
+      ORDER BY starts_at DESC, id DESC
+      LIMIT ?1
+    `
+  )
+    .bind(limit)
+    .all<MaintenanceWindowRow>();
+
+  const windows = results ?? [];
+  const monitorIdsByWindowId = await listMaintenanceWindowMonitorIdsByWindowId(
+    c.env.DB,
+    windows.map((w) => w.id)
+  );
+
+  return c.json({
+    maintenance_windows: windows.map((w) => maintenanceWindowRowToApi(w, monitorIdsByWindowId.get(w.id) ?? [])),
+  });
+});
+
+adminRoutes.post('/maintenance-windows', async (c) => {
+  const rawBody = await c.req.json().catch(() => {
+    throw new AppError(400, 'INVALID_ARGUMENT', 'Invalid JSON body');
+  });
+  const input = createMaintenanceWindowInputSchema.parse(rawBody);
+
+  const now = Math.floor(Date.now() / 1000);
+  const monitorIds = normalizeIdList(input.monitor_ids);
+  await ensureMonitorsExist(c.env.DB, monitorIds);
+
+  const row = await c.env.DB.prepare(
+    `
+      INSERT INTO maintenance_windows (title, message, starts_at, ends_at, created_at)
+      VALUES (?1, ?2, ?3, ?4, ?5)
+      RETURNING id, title, message, starts_at, ends_at, created_at
+    `
+  )
+    .bind(input.title, input.message ?? null, input.starts_at, input.ends_at, now)
+    .first<MaintenanceWindowRow>();
+
+  if (!row) {
+    throw new AppError(500, 'INTERNAL', 'Failed to create maintenance window');
+  }
+
+  const linkStatements = monitorIds.map((monitorId) =>
+    c.env.DB.prepare(
+      `
+        INSERT INTO maintenance_window_monitors (maintenance_window_id, monitor_id, created_at)
+        VALUES (?1, ?2, ?3)
+      `
+    ).bind(row.id, monitorId, now)
+  );
+  if (linkStatements.length > 0) {
+    await c.env.DB.batch(linkStatements);
+  }
+
+  return c.json({ maintenance_window: maintenanceWindowRowToApi(row, monitorIds) }, 201);
+});
+
+adminRoutes.patch('/maintenance-windows/:id', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const rawBody = await c.req.json().catch(() => {
+    throw new AppError(400, 'INVALID_ARGUMENT', 'Invalid JSON body');
+  });
+  const input = patchMaintenanceWindowInputSchema.parse(rawBody);
+
+  const existing = await c.env.DB.prepare(
+    `
+      SELECT id, title, message, starts_at, ends_at, created_at
+      FROM maintenance_windows
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<MaintenanceWindowRow>();
+
+  if (!existing) {
+    throw new AppError(404, 'NOT_FOUND', 'Maintenance window not found');
+  }
+
+  const nextStartsAt = input.starts_at ?? existing.starts_at;
+  const nextEndsAt = input.ends_at ?? existing.ends_at;
+  if (nextStartsAt >= nextEndsAt) {
+    throw new AppError(400, 'INVALID_ARGUMENT', '`starts_at` must be less than `ends_at`');
+  }
+
+  const updated = await c.env.DB.prepare(
+    `
+      UPDATE maintenance_windows
+      SET title = ?1, message = ?2, starts_at = ?3, ends_at = ?4
+      WHERE id = ?5
+      RETURNING id, title, message, starts_at, ends_at, created_at
+    `
+  )
+    .bind(
+      input.title ?? existing.title,
+      input.message !== undefined ? input.message : existing.message,
+      nextStartsAt,
+      nextEndsAt,
+      id
+    )
+    .first<MaintenanceWindowRow>();
+
+  if (!updated) {
+    throw new AppError(500, 'INTERNAL', 'Failed to update maintenance window');
+  }
+
+  if (input.monitor_ids !== undefined) {
+    const monitorIds = normalizeIdList(input.monitor_ids);
+    await ensureMonitorsExist(c.env.DB, monitorIds);
+
+    const statements: D1PreparedStatement[] = [];
+    statements.push(
+      c.env.DB.prepare(
+        `
+          DELETE FROM maintenance_window_monitors
+          WHERE maintenance_window_id = ?1
+        `
+      ).bind(id)
+    );
+    for (const monitorId of monitorIds) {
+      statements.push(
+        c.env.DB.prepare(
+          `
+            INSERT INTO maintenance_window_monitors (maintenance_window_id, monitor_id, created_at)
+            VALUES (?1, ?2, ?3)
+          `
+        ).bind(id, monitorId, Math.floor(Date.now() / 1000))
+      );
+    }
+
+    await c.env.DB.batch(statements);
+  }
+
+  const monitorIdsByWindowId = await listMaintenanceWindowMonitorIdsByWindowId(c.env.DB, [id]);
+  const monitorIds = monitorIdsByWindowId.get(id) ?? [];
+  return c.json({ maintenance_window: maintenanceWindowRowToApi(updated, monitorIds) });
+});
+
+adminRoutes.delete('/maintenance-windows/:id', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const existing = await c.env.DB.prepare(
+    `
+      SELECT id
+      FROM maintenance_windows
+      WHERE id = ?1
+    `
+  )
+    .bind(id)
+    .first<{ id: number }>();
+
+  if (!existing) {
+    throw new AppError(404, 'NOT_FOUND', 'Maintenance window not found');
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `
+        DELETE FROM maintenance_window_monitors
+        WHERE maintenance_window_id = ?1
+      `
+    ).bind(id),
+    c.env.DB.prepare(
+      `
+        DELETE FROM maintenance_windows
+        WHERE id = ?1
+      `
+    ).bind(id),
+  ]);
+
+  return c.json({ deleted: true });
 });

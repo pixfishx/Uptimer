@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export type MonitorType = 'http' | 'tcp';
 export type MonitorStatus = 'up' | 'down' | 'maintenance' | 'paused' | 'unknown';
@@ -106,6 +106,22 @@ export const incidentUpdates = sqliteTable(
   })
 );
 
+export const incidentMonitors = sqliteTable(
+  'incident_monitors',
+  {
+    incidentId: integer('incident_id').notNull(),
+    monitorId: integer('monitor_id').notNull(),
+    createdAt: integer('created_at')
+      .notNull()
+      .default(sql`(CAST(strftime('%s','now') AS INTEGER))`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.incidentId, t.monitorId] }),
+    monitorIdx: index('idx_incident_monitors_monitor').on(t.monitorId),
+    incidentIdx: index('idx_incident_monitors_incident').on(t.incidentId),
+  })
+);
+
 export const maintenanceWindows = sqliteTable('maintenance_windows', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   title: text('title').notNull(),
@@ -116,6 +132,22 @@ export const maintenanceWindows = sqliteTable('maintenance_windows', {
     .notNull()
     .default(sql`(CAST(strftime('%s','now') AS INTEGER))`),
 });
+
+export const maintenanceWindowMonitors = sqliteTable(
+  'maintenance_window_monitors',
+  {
+    maintenanceWindowId: integer('maintenance_window_id').notNull(),
+    monitorId: integer('monitor_id').notNull(),
+    createdAt: integer('created_at')
+      .notNull()
+      .default(sql`(CAST(strftime('%s','now') AS INTEGER))`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.maintenanceWindowId, t.monitorId] }),
+    monitorIdx: index('idx_maintenance_window_monitors_monitor').on(t.monitorId),
+    windowIdx: index('idx_maintenance_window_monitors_window').on(t.maintenanceWindowId),
+  })
+);
 
 export const notificationChannels = sqliteTable('notification_channels', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -155,4 +187,3 @@ export const locks = sqliteTable('locks', {
   name: text('name').primaryKey(),
   expiresAt: integer('expires_at').notNull(),
 });
-

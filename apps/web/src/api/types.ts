@@ -4,6 +4,39 @@ export type MonitorStatus = 'up' | 'down' | 'maintenance' | 'paused' | 'unknown'
 export type CheckStatus = 'up' | 'down' | 'maintenance' | 'unknown';
 export type MonitorType = 'http' | 'tcp';
 
+export type IncidentStatus = 'investigating' | 'identified' | 'monitoring' | 'resolved';
+export type IncidentImpact = 'none' | 'minor' | 'major' | 'critical';
+
+export interface IncidentUpdate {
+  id: number;
+  incident_id: number;
+  status: IncidentStatus | null;
+  message: string;
+  created_at: number;
+}
+
+export interface Incident {
+  id: number;
+  title: string;
+  status: IncidentStatus;
+  impact: IncidentImpact;
+  message: string | null;
+  started_at: number;
+  resolved_at: number | null;
+  monitor_ids: number[];
+  updates: IncidentUpdate[];
+}
+
+export interface MaintenanceWindow {
+  id: number;
+  title: string;
+  message: string | null;
+  starts_at: number;
+  ends_at: number;
+  created_at: number;
+  monitor_ids: number[];
+}
+
 export interface Heartbeat {
   checked_at: number;
   status: CheckStatus;
@@ -24,6 +57,14 @@ export interface PublicMonitor {
 export interface StatusResponse {
   generated_at: number;
   overall_status: MonitorStatus;
+  banner: {
+    source: 'incident' | 'maintenance' | 'monitors';
+    status: 'operational' | 'partial_outage' | 'major_outage' | 'maintenance' | 'unknown';
+    title: string;
+    incident?: { id: number; title: string; status: IncidentStatus; impact: IncidentImpact } | null;
+    maintenance_window?: { id: number; title: string; starts_at: number; ends_at: number } | null;
+    down_ratio?: number;
+  };
   summary: {
     up: number;
     down: number;
@@ -32,6 +73,11 @@ export interface StatusResponse {
     unknown: number;
   };
   monitors: PublicMonitor[];
+  active_incidents: Incident[];
+  maintenance_windows: {
+    active: MaintenanceWindow[];
+    upcoming: MaintenanceWindow[];
+  };
 }
 
 export interface LatencyPoint {
@@ -164,6 +210,49 @@ export interface NotificationChannelTestResult {
     error: string | null;
     created_at: number;
   } | null;
+}
+
+export interface PublicIncidentsResponse {
+  incidents: Incident[];
+  next_cursor: number | null;
+}
+
+export interface AdminIncidentsResponse {
+  incidents: Incident[];
+}
+
+export interface CreateIncidentInput {
+  title: string;
+  status?: Exclude<IncidentStatus, 'resolved'>;
+  impact?: IncidentImpact;
+  message?: string;
+  started_at?: number;
+  monitor_ids: number[];
+}
+
+export interface CreateIncidentUpdateInput {
+  message: string;
+  status?: Exclude<IncidentStatus, 'resolved'>;
+}
+
+export interface ResolveIncidentInput {
+  message?: string;
+}
+
+export interface CreateMaintenanceWindowInput {
+  title: string;
+  message?: string;
+  starts_at: number;
+  ends_at: number;
+  monitor_ids: number[];
+}
+
+export interface PatchMaintenanceWindowInput {
+  title?: string;
+  message?: string | null;
+  starts_at?: number;
+  ends_at?: number;
+  monitor_ids?: number[];
 }
 
 export interface ApiError {
