@@ -183,6 +183,15 @@ export const settings = sqliteTable('settings', {
   value: text('value').notNull(),
 });
 
+export const publicSnapshots = sqliteTable('public_snapshots', {
+  key: text('key').primaryKey(),
+  generatedAt: integer('generated_at').notNull(),
+  bodyJson: text('body_json').notNull(),
+  updatedAt: integer('updated_at')
+    .notNull()
+    .default(sql`(CAST(strftime('%s','now') AS INTEGER))`),
+});
+
 export const locks = sqliteTable('locks', {
   name: text('name').primaryKey(),
   expiresAt: integer('expires_at').notNull(),

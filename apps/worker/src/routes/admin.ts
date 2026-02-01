@@ -17,6 +17,8 @@ import {
 import type { Env } from '../env';
 import { requireAdmin } from '../middleware/auth';
 import { AppError } from '../middleware/errors';
+import { computePublicStatusPayload } from '../public/status';
+import { refreshPublicStatusSnapshot } from '../snapshots';
 import { runHttpCheck } from '../monitor/http';
 import { validateHttpTarget, validateTcpTarget } from '../monitor/targets';
 import { runTcpCheck } from '../monitor/tcp';
@@ -45,6 +47,19 @@ adminRoutes.use('*', requireAdmin);
 // Keep analytics endpoints in a separate router to reduce churn in this already-large file.
 adminRoutes.route('/analytics', adminAnalyticsRoutes);
 adminRoutes.route('/exports', adminExportsRoutes);
+
+function queuePublicStatusSnapshotRefresh(c: { env: Env; executionCtx: ExecutionContext }) {
+  const now = Math.floor(Date.now() / 1000);
+  c.executionCtx.waitUntil(
+    refreshPublicStatusSnapshot({
+      db: c.env.DB,
+      now,
+      compute: () => computePublicStatusPayload(c.env.DB, Math.floor(Date.now() / 1000)),
+    }).catch((err) => {
+      console.warn('public snapshot: refresh failed', err);
+    }),
+  );
+}
 
 function monitorRowToApi(row: typeof monitors.$inferSelect) {
   return {
@@ -118,6 +133,8 @@ adminRoutes.post('/monitors', async (c) => {
     })
     .returning()
     .get();
+
+  queuePublicStatusSnapshotRefresh(c);
 
   return c.json({ monitor: monitorRowToApi(inserted) }, 201);
 });
@@ -202,6 +219,8 @@ adminRoutes.patch('/monitors/:id', async (c) => {
     throw new AppError(500, 'INTERNAL', 'Failed to update monitor');
   }
 
+  queuePublicStatusSnapshotRefresh(c);
+
   return c.json({ monitor: monitorRowToApi(updated) });
 });
 
@@ -216,6 +235,8 @@ adminRoutes.delete('/monitors/:id', async (c) => {
   }
 
   await db.delete(monitors).where(eq(monitors.id, id)).run();
+
+  queuePublicStatusSnapshotRefresh(c);
 
   return c.json({ deleted: true });
 });
@@ -803,6 +824,8 @@ adminRoutes.post('/incidents', async (c) => {
     });
   }
 
+  queuePublicStatusSnapshotRefresh(c);
+
   return c.json({ incident: incidentRowToApi(row, [], monitorIds) }, 201);
 });
 
@@ -895,6 +918,8 @@ adminRoutes.post('/incidents/:id/updates', async (c) => {
     });
   }
 
+  queuePublicStatusSnapshotRefresh(c);
+
   return c.json({
     incident: incidentRowToApi(incidentRow, [], monitorIds),
     update: incidentUpdateRowToApi(updateRow),
@@ -925,6 +950,7 @@ adminRoutes.patch('/incidents/:id/resolve', async (c) => {
   if (existing.status === 'resolved') {
     const monitorIdsByIncidentId = await listIncidentMonitorIdsByIncidentId(c.env.DB, [id]);
     const monitorIds = monitorIdsByIncidentId.get(id) ?? [];
+
     return c.json({ incident: incidentRowToApi(existing, [], monitorIds) });
   }
 
@@ -991,6 +1017,8 @@ adminRoutes.patch('/incidents/:id/resolve', async (c) => {
     });
   }
 
+  queuePublicStatusSnapshotRefresh(c);
+
   return c.json({
     incident: incidentRowToApi(incidentRow, [], monitorIds),
     update: incidentUpdateRowToApi(updateRow),
@@ -1034,6 +1062,8 @@ adminRoutes.delete('/incidents/:id', async (c) => {
       `
     ).bind(id),
   ]);
+
+  queuePublicStatusSnapshotRefresh(c);
 
   return c.json({ deleted: true });
 });
@@ -1098,6 +1128,8 @@ adminRoutes.post('/maintenance-windows', async (c) => {
   if (linkStatements.length > 0) {
     await c.env.DB.batch(linkStatements);
   }
+
+  queuePublicStatusSnapshotRefresh(c);
 
   return c.json({ maintenance_window: maintenanceWindowRowToApi(row, monitorIds) }, 201);
 });
@@ -1180,6 +1212,8 @@ adminRoutes.patch('/maintenance-windows/:id', async (c) => {
 
   const monitorIdsByWindowId = await listMaintenanceWindowMonitorIdsByWindowId(c.env.DB, [id]);
   const monitorIds = monitorIdsByWindowId.get(id) ?? [];
+  queuePublicStatusSnapshotRefresh(c);
+
   return c.json({ maintenance_window: maintenanceWindowRowToApi(updated, monitorIds) });
 });
 
@@ -1214,6 +1248,8 @@ adminRoutes.delete('/maintenance-windows/:id', async (c) => {
       `
     ).bind(id),
   ]);
+
+  queuePublicStatusSnapshotRefresh(c);
 
   return c.json({ deleted: true });
 });

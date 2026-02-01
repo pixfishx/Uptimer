@@ -100,6 +100,7 @@ wrangler d1 execute uptimer --local --command="SELECT name FROM sqlite_master WH
 - notification_deliveries
 - settings
 - locks
+- public_snapshots
 
 ---
 
@@ -135,6 +136,15 @@ pnpm dev
 
 ```bash
 curl http://localhost:8787/api/v1/public/status
+```
+
+> **加速机制（Public status snapshot）**：Worker 会把 `/api/v1/public/status` 的结果写入 `public_snapshots` 表。
+> 并在后续请求中优先读取快照（最大滞后 60s，通常 <= 30s）。
+
+验证快照是否生成：
+
+```bash
+wrangler d1 execute uptimer --local --command="SELECT key, generated_at, updated_at, LENGTH(body_json) AS bytes FROM public_snapshots;"
 ```
 
 #### 获取单个监控的延迟数据

@@ -2,6 +2,9 @@ import type { MiddlewareHandler } from 'hono';
 
 // Cache public (unauthenticated) GET responses at the edge.
 // This reduces D1 read pressure and greatly improves TTFB on slow networks.
+//
+// IMPORTANT: If a handler already set Cache-Control, we respect it (do not override).
+// This allows endpoints like `/public/status` to precisely control freshness (<= 60s).
 export function cachePublic(opts: {
   cacheName: string;
   maxAgeSeconds: number;
@@ -12,7 +15,6 @@ export function cachePublic(opts: {
       return;
     }
 
-    // Only cache successful JSON responses.
     const cache = await caches.open(opts.cacheName);
     const cacheKey = new Request(c.req.url, { method: 'GET' });
 
@@ -25,12 +27,17 @@ export function cachePublic(opts: {
 
     // Respect explicit no-store/no-cache/private responses.
     const cacheControl = c.res.headers.get('Cache-Control');
-    if (cacheControl && /(?:^|,\s*)(?:private|no-(?:store|cache))(?:\s*(?:=|,|$))/i.test(cacheControl)) {
+    if (
+      cacheControl &&
+      /(?:^|,\s*)(?:private|no-(?:store|cache))(?:\s*(?:=|,|$))/i.test(cacheControl)
+    ) {
       return;
     }
 
-    // Set caching headers for downstream caches (browser/CDN).
-    c.res.headers.set('Cache-Control', `public, max-age=${opts.maxAgeSeconds}`);
+    // If the handler already set Cache-Control, keep it.
+    if (!cacheControl) {
+      c.res.headers.set('Cache-Control', `public, max-age=${opts.maxAgeSeconds}`);
+    }
 
     // Put into Cloudflare's cache without blocking the response.
     c.executionCtx.waitUntil(cache.put(cacheKey, c.res.clone()));

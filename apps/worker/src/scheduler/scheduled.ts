@@ -15,6 +15,8 @@ import { computeNextState, type MonitorStateSnapshot } from '../monitor/state-ma
 import { runTcpCheck } from '../monitor/tcp';
 import type { CheckOutcome } from '../monitor/types';
 import { dispatchWebhookToChannels, type WebhookChannel } from '../notify/webhook';
+import { computePublicStatusPayload } from '../public/status';
+import { refreshPublicStatusSnapshot } from '../snapshots';
 import { acquireLease } from './lock';
 
 const LOCK_NAME = 'scheduler:tick';
@@ -62,7 +64,7 @@ async function listActiveWebhookChannels(db: D1Database): Promise<WebhookChannel
       FROM notification_channels
       WHERE is_active = 1 AND type = 'webhook'
       ORDER BY id
-    `
+    `,
     )
     .all<ActiveWebhookChannelRow>();
 
@@ -76,7 +78,7 @@ async function listActiveWebhookChannels(db: D1Database): Promise<WebhookChannel
 async function listMaintenanceSuppressedMonitorIds(
   db: D1Database,
   at: number,
-  monitorIds: number[]
+  monitorIds: number[],
 ): Promise<Set<number>> {
   const ids = [...new Set(monitorIds)];
   if (ids.length === 0) return new Set();
@@ -94,9 +96,7 @@ async function listMaintenanceSuppressedMonitorIds(
   return new Set((results ?? []).map((r) => r.monitor_id));
 }
 
-function toHttpMethod(
-  value: string | null
-): 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | null {
+function toHttpMethod(value: string | null): 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | null {
   const normalized = (value ?? 'GET').toUpperCase();
   switch (normalized) {
     case 'GET':
@@ -152,7 +152,7 @@ async function listDueMonitors(db: D1Database, checkedAt: number): Promise<DueMo
         AND (s.status IS NULL OR s.status != 'paused')
         AND (s.last_checked_at IS NULL OR s.last_checked_at <= ?1 - m.interval_sec)
       ORDER BY m.id
-    `
+    `,
     )
     .bind(checkedAt)
     .all<DueMonitorRow>();
@@ -163,7 +163,7 @@ async function listDueMonitors(db: D1Database, checkedAt: number): Promise<DueMo
 function computeStateLastError(
   nextStatus: MonitorStatus,
   outcome: CheckOutcome,
-  prevLastError: string | null
+  prevLastError: string | null,
 ): string | null {
   if (nextStatus === 'down') {
     return outcome.status === 'up' ? prevLastError : outcome.error;
@@ -181,7 +181,7 @@ async function persistCheckAndState(
   outcome: CheckOutcome,
   next: { status: MonitorStatus; lastChangedAt: number; consecutiveFailures: number; consecutiveSuccesses: number },
   outageAction: 'open' | 'close' | 'update' | 'none',
-  stateLastError: string | null
+  stateLastError: string | null,
 ): Promise<void> {
   const checkError = outcome.status === 'up' ? null : outcome.error;
 
@@ -200,7 +200,7 @@ async function persistCheckAndState(
         location,
         attempt
       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-    `
+    `,
     ).bind(
       monitorId,
       checkedAt,
@@ -209,8 +209,8 @@ async function persistCheckAndState(
       outcome.httpStatus,
       checkError,
       null,
-      outcome.attempts
-    )
+      outcome.attempts,
+    ),
   );
 
   statements.push(
@@ -234,7 +234,7 @@ async function persistCheckAndState(
         last_error = excluded.last_error,
         consecutive_failures = excluded.consecutive_failures,
         consecutive_successes = excluded.consecutive_successes
-    `
+    `,
     ).bind(
       monitorId,
       next.status,
@@ -243,8 +243,8 @@ async function persistCheckAndState(
       outcome.latencyMs,
       stateLastError,
       next.consecutiveFailures,
-      next.consecutiveSuccesses
-    )
+      next.consecutiveSuccesses,
+    ),
   );
 
   if (outageAction === 'open') {
@@ -256,8 +256,8 @@ async function persistCheckAndState(
         WHERE NOT EXISTS (
           SELECT 1 FROM outages WHERE monitor_id = ?5 AND ended_at IS NULL
         )
-      `
-      ).bind(monitorId, checkedAt, checkError ?? 'down', checkError ?? 'down', monitorId)
+      `,
+      ).bind(monitorId, checkedAt, checkError ?? 'down', checkError ?? 'down', monitorId),
     );
   } else if (outageAction === 'close') {
     statements.push(
@@ -266,8 +266,8 @@ async function persistCheckAndState(
         UPDATE outages
         SET ended_at = ?1
         WHERE monitor_id = ?2 AND ended_at IS NULL
-      `
-      ).bind(checkedAt, monitorId)
+      `,
+      ).bind(checkedAt, monitorId),
     );
   } else if (outageAction === 'update' && checkError) {
     statements.push(
@@ -276,8 +276,8 @@ async function persistCheckAndState(
         UPDATE outages
         SET last_error = ?1
         WHERE monitor_id = ?2 AND ended_at IS NULL
-      `
-      ).bind(checkError, monitorId)
+      `,
+      ).bind(checkError, monitorId),
     );
   }
 
@@ -289,7 +289,7 @@ async function runDueMonitor(
   row: DueMonitorRow,
   checkedAt: number,
   notify: NotifyContext | null,
-  maintenanceSuppressed: boolean
+  maintenanceSuppressed: boolean,
 ): Promise<void> {
   const prevStatus = toMonitorStatus(row.state_status);
   const prev: MonitorStateSnapshot | null =
@@ -316,23 +316,23 @@ async function runDueMonitor(
           attempts: 1,
         };
       } else {
-      const httpHeaders = parseDbJsonNullable(httpHeadersJsonSchema, row.http_headers_json, {
-        field: 'http_headers_json',
-      });
-      const expectedStatus = parseDbJsonNullable(expectedStatusJsonSchema, row.expected_status_json, {
-        field: 'expected_status_json',
-      });
+        const httpHeaders = parseDbJsonNullable(httpHeadersJsonSchema, row.http_headers_json, {
+          field: 'http_headers_json',
+        });
+        const expectedStatus = parseDbJsonNullable(expectedStatusJsonSchema, row.expected_status_json, {
+          field: 'expected_status_json',
+        });
 
-      outcome = await runHttpCheck({
-        url: row.target,
-        timeoutMs: row.timeout_ms,
-        method: httpMethod,
-        headers: httpHeaders,
-        body: row.http_body,
-        expectedStatus,
-        responseKeyword: row.response_keyword,
-        responseForbiddenKeyword: row.response_forbidden_keyword,
-      });
+        outcome = await runHttpCheck({
+          url: row.target,
+          timeoutMs: row.timeout_ms,
+          method: httpMethod,
+          headers: httpHeaders,
+          body: row.http_body,
+          expectedStatus,
+          responseKeyword: row.response_keyword,
+          responseForbiddenKeyword: row.response_forbidden_keyword,
+        });
       }
     } else if (row.type === 'tcp') {
       outcome = await runTcpCheck({ target: row.target, timeoutMs: row.timeout_ms });
@@ -370,7 +370,7 @@ async function runDueMonitor(
       consecutiveSuccesses: next.consecutiveSuccesses,
     },
     outageAction,
-    stateLastError
+    stateLastError,
   );
 
   if (!notify || maintenanceSuppressed || !next.changed) {
@@ -421,7 +421,7 @@ async function runDueMonitor(
       payload,
     }).catch((err) => {
       console.error('notify: failed to dispatch webhooks', err);
-    })
+    }),
   );
 }
 
@@ -436,6 +436,17 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
 
   const due = await listDueMonitors(env.DB, checkedAt);
   if (due.length === 0) {
+    // Still refresh snapshots even if no monitors are due.
+    const snapshotNow = Math.floor(Date.now() / 1000);
+    ctx.waitUntil(
+      refreshPublicStatusSnapshot({
+        db: env.DB,
+        now: snapshotNow,
+        compute: () => computePublicStatusPayload(env.DB, snapshotNow),
+      }).catch((err) => {
+        console.warn('scheduled: status snapshot refresh failed', err);
+      }),
+    );
     return;
   }
 
@@ -447,12 +458,12 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
   const suppressedMonitorIds = await listMaintenanceSuppressedMonitorIds(
     env.DB,
     now,
-    due.map((m) => m.id)
+    due.map((m) => m.id),
   );
 
   const limit = pLimit(CHECK_CONCURRENCY);
   const settled = await Promise.allSettled(
-    due.map((m) => limit(() => runDueMonitor(env, m, checkedAt, notify, suppressedMonitorIds.has(m.id))))
+    due.map((m) => limit(() => runDueMonitor(env, m, checkedAt, notify, suppressedMonitorIds.has(m.id)))),
   );
 
   const rejected = settled.filter((r) => r.status === 'rejected');
@@ -461,4 +472,17 @@ export async function runScheduledTick(env: Env, ctx: ExecutionContext): Promise
   } else {
     console.log(`scheduled: processed ${settled.length} monitors at ${checkedAt}`);
   }
+
+  // Keep the public status snapshot fresh so the status page can load quickly.
+  // Best-effort: ignore errors so monitoring checks are not impacted.
+  const snapshotNow = Math.floor(Date.now() / 1000);
+  ctx.waitUntil(
+    refreshPublicStatusSnapshot({
+      db: env.DB,
+      now: snapshotNow,
+      compute: () => computePublicStatusPayload(env.DB, snapshotNow),
+    }).catch((err) => {
+      console.warn('scheduled: status snapshot refresh failed', err);
+    }),
+  );
 }
