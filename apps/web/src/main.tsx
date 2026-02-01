@@ -17,10 +17,12 @@ ReactDOM.createRoot(rootEl).render(
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <RouterProvider router={router} />
+          <RouterProvider
+            router={router}
+            fallbackElement={<div className="min-h-screen bg-slate-50 dark:bg-slate-900" />}
+          />
         </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>
   </React.StrictMode>,
 );
-

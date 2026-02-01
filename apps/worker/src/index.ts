@@ -28,6 +28,21 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
+// Redirect legacy `/api/*` paths to the versioned API.
+// This is useful when Pages (dev/prod) proxies `/api` to this Worker but the
+// frontend calls `/api/v1/...`.
+app.use('/api/*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === '/api/v1' || path.startsWith('/api/v1/')) {
+    await next();
+    return;
+  }
+
+  const url = new URL(c.req.url);
+  url.pathname = `/api/v1${path.slice('/api'.length)}`;
+  return c.redirect(url.toString(), 308);
+});
+
 app.onError(handleError);
 app.notFound(handleNotFound);
 

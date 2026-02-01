@@ -1,5 +1,6 @@
-/* Import Inter font */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+/*
+ * Avoid external font requests for faster first paint on slow networks.
+ */
 
 @tailwind base;
 @tailwind components;
@@ -50,7 +51,11 @@
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    sans-serif;
   background-color: var(--color-bg);
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
@@ -165,7 +170,7 @@ body {
 @media (pointer: coarse) {
   button,
   a,
-  [role="button"] {
+  [role='button'] {
     min-height: 44px;
     min-width: 44px;
   }
@@ -180,7 +185,7 @@ body {
 
 /* Prevent text selection on interactive elements */
 button,
-[role="button"] {
+[role='button'] {
   -webkit-user-select: none;
   user-select: none;
 }
@@ -189,18 +194,18 @@ button,
 @media (hover: none) {
   button:active,
   a:active,
-  [role="button"]:active {
+  [role='button']:active {
     opacity: 0.7;
   }
 }
 
 /* Prevent zoom on input focus (iOS) */
 @media screen and (max-width: 640px) {
-  input[type="text"],
-  input[type="number"],
-  input[type="email"],
-  input[type="password"],
-  input[type="datetime-local"],
+  input[type='text'],
+  input[type='number'],
+  input[type='email'],
+  input[type='password'],
+  input[type='datetime-local'],
   select,
   textarea {
     font-size: 16px;

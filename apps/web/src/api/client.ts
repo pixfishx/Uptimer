@@ -33,6 +33,20 @@ import type {
 // - override: set `VITE_API_BASE` to e.g. `https://<worker>.<subdomain>.workers.dev/api/v1`
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? '/api/v1';
 
+const PUBLIC_CACHE_TTL_MS = 30_000;
+const publicCache = new Map<string, { at: number; value: unknown }>();
+
+function getCachedPublic<T>(key: string): T | null {
+  const hit = publicCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > PUBLIC_CACHE_TTL_MS) return null;
+  return hit.value as T;
+}
+
+function setCachedPublic(key: string, value: unknown) {
+  publicCache.set(key, { at: Date.now(), value });
+}
+
 class ApiError extends Error {
   constructor(
     public code: string,
@@ -91,23 +105,75 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 // Public API
 export async function fetchStatus(): Promise<StatusResponse> {
-  const res = await fetch(`${API_BASE}/public/status`);
-  return handleResponse<StatusResponse>(res);
+  const url = `${API_BASE}/public/status`;
+  const cached = getCachedPublic<StatusResponse>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url);
+    const data = await handleResponse<StatusResponse>(res);
+    setCachedPublic(url, data);
+    return data;
+  } catch (err) {
+    const stale = getCachedPublic<StatusResponse>(url);
+    if (stale) return stale;
+    throw err;
+  }
 }
 
-export async function fetchLatency(monitorId: number, range: '24h' = '24h'): Promise<LatencyResponse> {
-  const res = await fetch(`${API_BASE}/public/monitors/${monitorId}/latency?range=${range}`);
-  return handleResponse<LatencyResponse>(res);
+export async function fetchLatency(
+  monitorId: number,
+  range: '24h' = '24h',
+): Promise<LatencyResponse> {
+  const url = `${API_BASE}/public/monitors/${monitorId}/latency?range=${range}`;
+  const cached = getCachedPublic<LatencyResponse>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url);
+    const data = await handleResponse<LatencyResponse>(res);
+    setCachedPublic(url, data);
+    return data;
+  } catch (err) {
+    const stale = getCachedPublic<LatencyResponse>(url);
+    if (stale) return stale;
+    throw err;
+  }
 }
 
-export async function fetchUptime(monitorId: number, range: '24h' | '7d' | '30d' = '24h'): Promise<UptimeResponse> {
-  const res = await fetch(`${API_BASE}/public/monitors/${monitorId}/uptime?range=${range}`);
-  return handleResponse<UptimeResponse>(res);
+export async function fetchUptime(
+  monitorId: number,
+  range: '24h' | '7d' | '30d' = '24h',
+): Promise<UptimeResponse> {
+  const url = `${API_BASE}/public/monitors/${monitorId}/uptime?range=${range}`;
+  const cached = getCachedPublic<UptimeResponse>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url);
+    const data = await handleResponse<UptimeResponse>(res);
+    setCachedPublic(url, data);
+    return data;
+  } catch (err) {
+    const stale = getCachedPublic<UptimeResponse>(url);
+    if (stale) return stale;
+    throw err;
+  }
 }
 
-export async function fetchPublicUptimeOverview(range: '30d' | '90d' = '30d'): Promise<PublicUptimeOverviewResponse> {
-  const res = await fetch(`${API_BASE}/public/analytics/uptime?range=${range}`);
-  return handleResponse<PublicUptimeOverviewResponse>(res);
+export async function fetchPublicUptimeOverview(
+  range: '30d' | '90d' = '30d',
+): Promise<PublicUptimeOverviewResponse> {
+  const url = `${API_BASE}/public/analytics/uptime?range=${range}`;
+  const cached = getCachedPublic<PublicUptimeOverviewResponse>(url);
+  if (cached) return cached;
+  try {
+    const res = await fetch(url);
+    const data = await handleResponse<PublicUptimeOverviewResponse>(res);
+    setCachedPublic(url, data);
+    return data;
+  } catch (err) {
+    const stale = getCachedPublic<PublicUptimeOverviewResponse>(url);
+    if (stale) return stale;
+    throw err;
+  }
 }
 
 export { ApiError };
@@ -129,7 +195,10 @@ export async function createMonitor(input: CreateMonitorInput): Promise<{ monito
   return handleResponse<{ monitor: AdminMonitor }>(res);
 }
 
-export async function updateMonitor(id: number, input: PatchMonitorInput): Promise<{ monitor: AdminMonitor }> {
+export async function updateMonitor(
+  id: number,
+  input: PatchMonitorInput,
+): Promise<{ monitor: AdminMonitor }> {
   const res = await fetch(`${API_BASE}/admin/monitors/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -155,7 +224,9 @@ export async function testMonitor(id: number): Promise<MonitorTestResult> {
 }
 
 // Admin API - Notification Channels
-export async function fetchNotificationChannels(limit = 50): Promise<{ notification_channels: NotificationChannel[] }> {
+export async function fetchNotificationChannels(
+  limit = 50,
+): Promise<{ notification_channels: NotificationChannel[] }> {
   const res = await fetch(`${API_BASE}/admin/notification-channels?limit=${limit}`, {
     headers: getAuthHeaders(),
   });
@@ -202,7 +273,10 @@ export async function deleteNotificationChannel(id: number): Promise<{ deleted: 
 }
 
 // Public API - Incidents
-export async function fetchPublicIncidents(limit = 20, cursor?: number): Promise<PublicIncidentsResponse> {
+export async function fetchPublicIncidents(
+  limit = 20,
+  cursor?: number,
+): Promise<PublicIncidentsResponse> {
   const qs = new URLSearchParams({ limit: String(limit) });
   if (cursor) qs.set('cursor', String(cursor));
   const res = await fetch(`${API_BASE}/public/incidents?${qs.toString()}`);
@@ -246,9 +320,12 @@ export async function fetchAdminMonitorOutages(
   qs.set('limit', String(opts.limit ?? 50));
   if (opts.cursor !== undefined) qs.set('cursor', String(opts.cursor));
 
-  const res = await fetch(`${API_BASE}/admin/analytics/monitors/${monitorId}/outages?${qs.toString()}`, {
-    headers: getAuthHeaders(),
-  });
+  const res = await fetch(
+    `${API_BASE}/admin/analytics/monitors/${monitorId}/outages?${qs.toString()}`,
+    {
+      headers: getAuthHeaders(),
+    },
+  );
   return handleResponse<MonitorOutagesResponse>(res);
 }
 
@@ -294,7 +371,9 @@ export async function deleteIncident(id: number): Promise<{ deleted: boolean }> 
 }
 
 // Admin API - Maintenance Windows
-export async function fetchMaintenanceWindows(limit = 50): Promise<{ maintenance_windows: MaintenanceWindow[] }> {
+export async function fetchMaintenanceWindows(
+  limit = 50,
+): Promise<{ maintenance_windows: MaintenanceWindow[] }> {
   const res = await fetch(`${API_BASE}/admin/maintenance-windows?limit=${limit}`, {
     headers: getAuthHeaders(),
   });
