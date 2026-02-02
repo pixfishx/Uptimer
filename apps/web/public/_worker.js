@@ -38,30 +38,30 @@ function formatTime(tsSec) {
 function statusDotClass(status) {
   switch (status) {
     case 'up':
-      return 'bg-emerald-500';
+      return 'bg-emerald-500 dark:bg-emerald-400';
     case 'down':
-      return 'bg-red-500';
+      return 'bg-red-500 dark:bg-red-400';
     case 'maintenance':
-      return 'bg-blue-500';
+      return 'bg-blue-500 dark:bg-blue-400';
     case 'paused':
-      return 'bg-amber-500';
+      return 'bg-amber-500 dark:bg-amber-400';
     default:
-      return 'bg-slate-400';
+      return 'bg-slate-400 dark:bg-slate-500';
   }
 }
 
 function statusBadgeClass(status) {
   switch (status) {
     case 'up':
-      return 'bg-emerald-50 text-emerald-700 ring-emerald-600/20';
+      return 'bg-emerald-50 text-emerald-700 ring-emerald-600/20 dark:bg-emerald-500/10 dark:text-emerald-400 dark:ring-emerald-400/20';
     case 'down':
-      return 'bg-red-50 text-red-700 ring-red-600/20';
+      return 'bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-400/20';
     case 'maintenance':
-      return 'bg-blue-50 text-blue-700 ring-blue-600/20';
+      return 'bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-400/20';
     case 'paused':
-      return 'bg-amber-50 text-amber-700 ring-amber-600/20';
+      return 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-400/20';
     default:
-      return 'bg-slate-50 text-slate-600 ring-slate-500/20';
+      return 'bg-slate-50 text-slate-600 ring-slate-500/20 dark:bg-slate-500/10 dark:text-slate-400 dark:ring-slate-400/20';
   }
 }
 
@@ -91,32 +91,32 @@ function renderPreload(snapshot) {
         : 'Never checked';
 
       return `
-        <div class="bg-white rounded-xl border border-slate-100 shadow-soft p-4">
+        <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700 shadow-soft dark:shadow-none p-4">
           <div class="flex items-start justify-between mb-3">
             <div class="flex items-center gap-2.5 min-w-0">
               <span class="relative flex h-2.5 w-2.5"><span class="relative inline-flex h-2.5 w-2.5 rounded-full ${statusDotClass(
                 status,
               )}"></span></span>
               <div class="min-w-0">
-                <div class="font-semibold text-slate-900 truncate">${name}</div>
-                <div class="text-xs text-slate-500 uppercase tracking-wide">${type}</div>
+                <div class="font-semibold text-slate-900 dark:text-slate-100 truncate">${name}</div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">${type}</div>
               </div>
             </div>
             <span class="inline-flex items-center rounded-full font-medium ring-1 ring-inset px-2 py-0.5 text-xs ${statusBadgeClass(
               status,
             )}">${escapeHtml(status)}</span>
           </div>
-          <div class="text-xs text-slate-400">${lastChecked}</div>
+          <div class="text-xs text-slate-400 dark:text-slate-500">${lastChecked}</div>
         </div>
       `;
     })
     .join('');
 
   return `
-    <div class="min-h-screen bg-slate-50">
-      <header class="bg-white border-b border-slate-100">
+    <div class="min-h-screen bg-slate-50 dark:bg-slate-900">
+      <header class="bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700">
         <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
-          <div class="text-lg font-bold text-slate-900">Uptimer</div>
+          <div class="text-lg font-bold text-slate-900 dark:text-slate-100">Uptimer</div>
           <span class="inline-flex items-center rounded-full font-medium ring-1 ring-inset px-2.5 py-1 text-sm ${statusBadgeClass(
             overall,
           )}">${escapeHtml(overall)}</span>
@@ -124,9 +124,9 @@ function renderPreload(snapshot) {
       </header>
 
       <main class="max-w-5xl mx-auto px-4 py-6">
-        <div class="rounded-2xl p-5 border border-slate-100 bg-white shadow-soft mb-6">
-          <div class="text-sm text-slate-500">${escapeHtml(bannerTitle)}</div>
-          <div class="text-xs text-slate-400 mt-1">Updated: ${escapeHtml(formatTime(generatedAt))}</div>
+        <div class="rounded-2xl p-5 border border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 shadow-soft dark:shadow-none mb-6">
+          <div class="text-sm text-slate-500 dark:text-slate-300">${escapeHtml(bannerTitle)}</div>
+          <div class="text-xs text-slate-400 dark:text-slate-500 mt-1">Updated: ${escapeHtml(formatTime(generatedAt))}</div>
         </div>
 
         <div class="grid gap-4 sm:grid-cols-2">${monitorCards}</div>
