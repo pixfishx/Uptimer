@@ -136,9 +136,9 @@ function buildUnknownIntervals(
       return;
     }
 
-    const validUntil = lastCheck.checked_at + intervalSec;
+    const validUntil = lastCheck.checked_at + intervalSec * 2;
 
-    // Status only applies within [checked_at, checked_at + intervalSec). Beyond that, it's UNKNOWN.
+    // Allow up to 2x interval jitter before treating gaps as UNKNOWN (matches status-page stale threshold).
     if (segStart >= validUntil) {
       addUnknown(segStart, segEnd);
       return;
@@ -541,7 +541,7 @@ publicRoutes.get('/monitors/:id/uptime', async (c) => {
   );
   const downtime_sec = sumIntervals(downtimeIntervals);
 
-  const checksStart = rangeStart - monitor.interval_sec;
+  const checksStart = rangeStart - monitor.interval_sec * 2;
   const { results: checkRows } = await c.env.DB.prepare(
     `
       SELECT checked_at, status

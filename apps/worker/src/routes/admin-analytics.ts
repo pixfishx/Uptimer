@@ -112,6 +112,7 @@ adminAnalyticsRoutes.get('/overview', async (c) => {
     `
       SELECT id, created_at
       FROM monitors
+      WHERE is_active = 1
       ORDER BY id
     `
   ).all<{ id: number; created_at: number }>();
@@ -126,10 +127,12 @@ adminAnalyticsRoutes.get('/overview', async (c) => {
 
   const { results: outageRows } = await c.env.DB.prepare(
     `
-      SELECT monitor_id, started_at, ended_at
-      FROM outages
-      WHERE started_at < ?1 AND (ended_at IS NULL OR ended_at > ?2)
-      ORDER BY monitor_id, started_at
+      SELECT o.monitor_id, o.started_at, o.ended_at
+      FROM outages o
+      JOIN monitors m ON m.id = o.monitor_id
+      WHERE m.is_active = 1
+        AND o.started_at < ?1 AND (o.ended_at IS NULL OR o.ended_at > ?2)
+      ORDER BY o.monitor_id, o.started_at
     `
   )
     .bind(rangeEnd, rangeStartBase)
@@ -164,8 +167,10 @@ adminAnalyticsRoutes.get('/overview', async (c) => {
   const { results: alertCountRows } = await c.env.DB.prepare(
     `
       SELECT COUNT(1) AS count
-      FROM outages
-      WHERE started_at >= ?1 AND started_at < ?2
+      FROM outages o
+      JOIN monitors m ON m.id = o.monitor_id
+      WHERE m.is_active = 1
+        AND o.started_at >= ?1 AND o.started_at < ?2
     `
   )
     .bind(rangeStartBase, rangeEnd)
@@ -174,9 +179,12 @@ adminAnalyticsRoutes.get('/overview', async (c) => {
 
   const { results: mttrRows } = await c.env.DB.prepare(
     `
-      SELECT started_at, ended_at
-      FROM outages
-      WHERE ended_at IS NOT NULL AND ended_at >= ?1 AND ended_at < ?2
+      SELECT o.started_at, o.ended_at
+      FROM outages o
+      JOIN monitors m ON m.id = o.monitor_id
+      WHERE m.is_active = 1
+        AND o.ended_at IS NOT NULL
+        AND o.ended_at >= ?1 AND o.ended_at < ?2
     `
   )
     .bind(rangeStartBase, rangeEnd)
@@ -259,7 +267,7 @@ adminAnalyticsRoutes.get('/monitors/:id', async (c) => {
     const downtimeIntervals = clampOutageIntervals(outageRows ?? [], rangeStart, rangeEnd);
     const downtime_sec = sumIntervals(downtimeIntervals);
 
-    const checksStart = rangeStart - monitor.interval_sec;
+    const checksStart = rangeStart - monitor.interval_sec * 2;
     const { results: checkRows } = await c.env.DB.prepare(
       `
         SELECT checked_at, status, latency_ms

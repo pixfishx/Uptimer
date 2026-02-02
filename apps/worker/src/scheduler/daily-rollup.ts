@@ -95,7 +95,7 @@ export async function runDailyRollup(env: Env, controller: ScheduledController, 
     );
     const downtime_sec = sumIntervals(downtimeIntervals);
 
-    const checksStart = rangeStart - m.interval_sec;
+    const checksStart = rangeStart - m.interval_sec * 2;
     const { results: checkRows } = await env.DB.prepare(
       `
         SELECT checked_at, status, latency_ms

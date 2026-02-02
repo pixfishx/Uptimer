@@ -234,7 +234,18 @@ adminRoutes.delete('/monitors/:id', async (c) => {
     throw new AppError(404, 'NOT_FOUND', 'Monitor not found');
   }
 
-  await db.delete(monitors).where(eq(monitors.id, id)).run();
+  // Deleting a monitor must also stop future scheduled checks and keep analytics
+  // consistent. We hard-delete and cascade-delete all monitor-scoped records.
+  // (No FK constraints are enforced by D1 here.)
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM check_results WHERE monitor_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM outages WHERE monitor_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM monitor_state WHERE monitor_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM monitor_daily_rollups WHERE monitor_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM maintenance_window_monitors WHERE monitor_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM incident_monitors WHERE monitor_id = ?1').bind(id),
+    c.env.DB.prepare('DELETE FROM monitors WHERE id = ?1').bind(id),
+  ]);
 
   queuePublicStatusSnapshotRefresh(c);
 
