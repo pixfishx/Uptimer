@@ -364,6 +364,106 @@ adminRoutes.post('/monitors/:id/test', async (c) => {
   });
 });
 
+adminRoutes.post('/monitors/:id/pause', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const db = getDb(c.env);
+  const monitor = await db.select().from(monitors).where(eq(monitors.id, id)).get();
+
+  if (!monitor) {
+    throw new AppError(404, 'NOT_FOUND', 'Monitor not found');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // Keep the state row present so public/admin payloads can reliably surface `paused`.
+  // Reset streaks to avoid flapping thresholds being affected when the monitor resumes.
+  await c.env.DB.batch([
+    c.env.DB
+      .prepare(
+        `
+        INSERT INTO monitor_state (
+          monitor_id,
+          status,
+          last_checked_at,
+          last_changed_at,
+          last_latency_ms,
+          last_error,
+          consecutive_failures,
+          consecutive_successes
+        ) VALUES (?1, 'paused', NULL, ?2, NULL, NULL, 0, 0)
+        ON CONFLICT(monitor_id) DO UPDATE SET
+          status = 'paused',
+          last_changed_at = ?2,
+          consecutive_failures = 0,
+          consecutive_successes = 0
+      `,
+      )
+      .bind(id, now),
+
+    // If the monitor was DOWN when it got paused, the scheduler will no longer run to close the outage.
+    // Close any open outage interval so analytics/exports don't keep accumulating downtime indefinitely.
+    c.env.DB
+      .prepare(
+        `
+        UPDATE outages
+        SET ended_at = ?1
+        WHERE monitor_id = ?2 AND ended_at IS NULL
+      `,
+      )
+      .bind(now, id),
+  ]);
+
+  const state = await db.select().from(monitorState).where(eq(monitorState.monitorId, id)).get();
+
+  queuePublicStatusSnapshotRefresh(c);
+
+  return c.json({ monitor: monitorRowToApi(monitor, state ?? null) });
+});
+
+adminRoutes.post('/monitors/:id/resume', async (c) => {
+  const id = z.coerce.number().int().positive().parse(c.req.param('id'));
+
+  const db = getDb(c.env);
+  const monitor = await db.select().from(monitors).where(eq(monitors.id, id)).get();
+
+  if (!monitor) {
+    throw new AppError(404, 'NOT_FOUND', 'Monitor not found');
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // Resume by returning to UNKNOWN so the scheduler will pick it up on the next tick.
+  await c.env.DB
+    .prepare(
+      `
+      INSERT INTO monitor_state (
+        monitor_id,
+        status,
+        last_checked_at,
+        last_changed_at,
+        last_latency_ms,
+        last_error,
+        consecutive_failures,
+        consecutive_successes
+      ) VALUES (?1, 'unknown', NULL, ?2, NULL, NULL, 0, 0)
+      ON CONFLICT(monitor_id) DO UPDATE SET
+        status = 'unknown',
+        last_changed_at = ?2,
+        consecutive_failures = 0,
+        consecutive_successes = 0
+    `,
+    )
+    .bind(id, now)
+    .run();
+
+  const state = await db.select().from(monitorState).where(eq(monitorState.monitorId, id)).get();
+
+  queuePublicStatusSnapshotRefresh(c);
+
+  return c.json({ monitor: monitorRowToApi(monitor, state ?? null) });
+});
+
 type NotificationChannelRow = {
   id: number;
   name: string;

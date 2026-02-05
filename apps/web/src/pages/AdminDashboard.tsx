@@ -11,6 +11,8 @@ import {
   updateMonitor,
   deleteMonitor,
   testMonitor,
+  pauseMonitor,
+  resumeMonitor,
   fetchNotificationChannels,
   createNotificationChannel,
   updateNotificationChannel,
@@ -237,6 +239,25 @@ export function AdminDashboard() {
       }));
     },
   });
+
+  const pauseMonitorMut = useMutation({
+    mutationFn: pauseMonitor,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['admin-monitors'], (old: { monitors: AdminMonitor[] } | undefined) => ({
+        monitors: (old?.monitors ?? []).map((m) => (m.id === data.monitor.id ? data.monitor : m)),
+      }));
+    },
+  });
+
+  const resumeMonitorMut = useMutation({
+    mutationFn: resumeMonitor,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['admin-monitors'], (old: { monitors: AdminMonitor[] } | undefined) => ({
+        monitors: (old?.monitors ?? []).map((m) => (m.id === data.monitor.id ? data.monitor : m)),
+      }));
+    },
+  });
+
   const testMonitorMut = useMutation({ mutationFn: testMonitor, onSettled: () => setTestingMonitorId(null) });
 
   const createChannelMut = useMutation({
@@ -494,6 +515,23 @@ export function AdminDashboard() {
                                 className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 px-2 sm:px-2.5 py-1.5 rounded-md transition-colors"
                               >
                                 {testingMonitorId === m.id ? 'Testing...' : 'Test'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (m.status === 'paused') {
+                                    resumeMonitorMut.mutate(m.id);
+                                  } else {
+                                    pauseMonitorMut.mutate(m.id);
+                                  }
+                                }}
+                                disabled={
+                                  pauseMonitorMut.isPending ||
+                                  resumeMonitorMut.isPending ||
+                                  testingMonitorId === m.id
+                                }
+                                className="text-sm text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50 px-2 sm:px-2.5 py-1.5 rounded-md transition-colors"
+                              >
+                                {m.status === 'paused' ? 'Resume' : 'Pause'}
                               </button>
                               <button
                                 onClick={() => {

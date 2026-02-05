@@ -284,6 +284,22 @@ export async function deleteMonitor(id: number): Promise<{ deleted: boolean }> {
   return handleResponse<{ deleted: boolean }>(res);
 }
 
+export async function pauseMonitor(id: number): Promise<{ monitor: AdminMonitor }> {
+  const res = await fetch(`${API_BASE}/admin/monitors/${id}/pause`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<{ monitor: AdminMonitor }>(res);
+}
+
+export async function resumeMonitor(id: number): Promise<{ monitor: AdminMonitor }> {
+  const res = await fetch(`${API_BASE}/admin/monitors/${id}/resume`, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+  });
+  return handleResponse<{ monitor: AdminMonitor }>(res);
+}
+
 export async function testMonitor(id: number): Promise<MonitorTestResult> {
   const res = await fetch(`${API_BASE}/admin/monitors/${id}/test`, {
     method: 'POST',
