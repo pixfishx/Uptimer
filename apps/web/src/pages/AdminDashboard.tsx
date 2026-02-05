@@ -1083,21 +1083,25 @@ export function AdminDashboard() {
             </h2>
 
             {(modal.type === 'create-monitor' || modal.type === 'edit-monitor') && (
-              <MonitorForm
-                monitor={modal.type === 'edit-monitor' ? modal.monitor : undefined}
-                onSubmit={(data) =>
-                  modal.type === 'edit-monitor'
-                    ? updateMonitorMut.mutate({ id: modal.monitor.id, data })
-                    : createMonitorMut.mutate(data)
-                }
-                onCancel={closeModal}
-                isLoading={createMonitorMut.isPending || updateMonitorMut.isPending}
-                error={
-                  modal.type === 'create-monitor'
-                    ? formatError(createMonitorMut.error)
-                    : formatError(updateMonitorMut.error)
-                }
-              />
+              <>
+                {modal.type === 'create-monitor' && (
+                  <MonitorForm
+                    onSubmit={(data) => createMonitorMut.mutate(data)}
+                    onCancel={closeModal}
+                    isLoading={createMonitorMut.isPending}
+                    error={formatError(createMonitorMut.error)}
+                  />
+                )}
+                {modal.type === 'edit-monitor' && (
+                  <MonitorForm
+                    monitor={modal.monitor}
+                    onSubmit={(data) => updateMonitorMut.mutate({ id: modal.monitor.id, data })}
+                    onCancel={closeModal}
+                    isLoading={updateMonitorMut.isPending}
+                    error={formatError(updateMonitorMut.error)}
+                  />
+                )}
+              </>
             )}
             {(modal.type === 'create-channel' || modal.type === 'edit-channel') && (
               <NotificationChannelForm
