@@ -4,6 +4,7 @@ import type { Heartbeat, CheckStatus } from '../api/types';
 interface HeartbeatBarProps {
   heartbeats: Heartbeat[];
   maxBars?: number;
+  density?: 'default' | 'compact';
 }
 
 function statusToAccessibleLabel(status: CheckStatus): string {
@@ -77,8 +78,9 @@ function Tooltip({ heartbeat, position }: TooltipProps) {
   );
 }
 
-export function HeartbeatBar({ heartbeats, maxBars = 60 }: HeartbeatBarProps) {
+export function HeartbeatBar({ heartbeats, maxBars = 60, density = 'default' }: HeartbeatBarProps) {
   const [tooltip, setTooltip] = useState<{ heartbeat: Heartbeat; position: { x: number; y: number } } | null>(null);
+  const compact = density === 'compact';
 
   const displayHeartbeats = heartbeats.slice(0, maxBars);
   const reversed = [...displayHeartbeats].reverse();
@@ -93,16 +95,22 @@ export function HeartbeatBar({ heartbeats, maxBars = 60 }: HeartbeatBarProps) {
 
   return (
     <>
-      <div className="flex gap-[2px] sm:gap-[3px] h-6 sm:h-8 items-end">
+      <div
+        className={compact
+          ? 'flex h-5 items-end gap-[2px] sm:h-6'
+          : 'flex h-6 items-end gap-[2px] sm:h-8 sm:gap-[3px]'}
+      >
         {reversed.map((hb, idx) => (
           <div
             key={idx}
             role="img"
             aria-label={`${statusToAccessibleLabel(hb.status)} ${formatTime(hb.checked_at)}${hb.latency_ms !== null ? ` ${hb.latency_ms}ms` : ''}`}
-            className={`flex-1 min-w-[3px] sm:min-w-[4px] max-w-[6px] sm:max-w-[8px] rounded-sm transition-all duration-150 cursor-pointer
+            className={`${compact
+              ? 'max-w-[6px] min-w-[3px] flex-1'
+              : 'max-w-[6px] min-w-[3px] flex-1 sm:max-w-[8px] sm:min-w-[4px]'} rounded-sm transition-all duration-150 cursor-pointer
               ${getStatusColor(hb.status)}
-              hover:scale-y-110 hover:shadow-md ${tooltip?.heartbeat === hb ? getStatusGlow(hb.status) : ''}`}
-            style={{ height: hb.status === 'up' ? '100%' : hb.status === 'down' ? '100%' : '60%' }}
+              ${compact ? 'hover:scale-y-105' : 'hover:scale-y-110'} hover:shadow-md ${tooltip?.heartbeat === hb ? getStatusGlow(hb.status) : ''}`}
+            style={{ height: hb.status === 'up' || hb.status === 'down' ? '100%' : compact ? '58%' : '60%' }}
             onMouseEnter={(e) => handleMouseEnter(hb, e)}
             onMouseLeave={() => setTooltip(null)}
           />
@@ -111,7 +119,9 @@ export function HeartbeatBar({ heartbeats, maxBars = 60 }: HeartbeatBarProps) {
           Array.from({ length: maxBars - reversed.length }).map((_, idx) => (
             <div
               key={`empty-${idx}`}
-              className="flex-1 min-w-[3px] sm:min-w-[4px] max-w-[6px] sm:max-w-[8px] h-[60%] rounded-sm bg-slate-200 dark:bg-slate-700"
+              className={compact
+                ? 'h-[58%] max-w-[6px] min-w-[3px] flex-1 rounded-sm bg-slate-200 dark:bg-slate-700'
+                : 'h-[60%] max-w-[6px] min-w-[3px] flex-1 rounded-sm bg-slate-200 dark:bg-slate-700 sm:max-w-[8px] sm:min-w-[4px]'}
             />
           ))}
       </div>

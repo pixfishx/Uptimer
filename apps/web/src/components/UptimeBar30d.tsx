@@ -11,6 +11,7 @@ interface UptimeBar30dProps {
   maxBars?: number;
   timeZone: string;
   onDayClick?: (dayStartAt: number) => void;
+  density?: 'default' | 'compact';
 }
 
 function formatDay(ts: number, timeZone: string): string {
@@ -134,8 +135,16 @@ function Tooltip({ day, position, ratingLevel, timeZone }: { day: UptimeDay; pos
   );
 }
 
-export function UptimeBar30d({ days, ratingLevel = 3, maxBars = 30, timeZone, onDayClick }: UptimeBar30dProps) {
+export function UptimeBar30d({
+  days,
+  ratingLevel = 3,
+  maxBars = 30,
+  timeZone,
+  onDayClick,
+  density = 'default',
+}: UptimeBar30dProps) {
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
+  const compact = density === 'compact';
 
   const displayDays = useMemo(() => {
     if (!Array.isArray(days)) return [];
@@ -156,12 +165,18 @@ export function UptimeBar30d({ days, ratingLevel = 3, maxBars = 30, timeZone, on
 
   return (
     <>
-      <div className="flex gap-[2px] sm:gap-[3px] h-6 sm:h-8 items-end">
+      <div
+        className={compact
+          ? 'flex h-5 items-end gap-[2px] sm:h-6'
+          : 'flex h-6 items-end gap-[2px] sm:h-8 sm:gap-[3px]'}
+      >
         {emptyCount > 0 &&
           Array.from({ length: emptyCount }).map((_, idx) => (
             <div
               key={`empty-${idx}`}
-              className="flex-1 min-w-[3px] sm:min-w-[4px] max-w-[6px] sm:max-w-[8px] h-[100%] rounded-sm bg-slate-200 dark:bg-slate-700"
+              className={compact
+                ? 'h-[100%] max-w-[6px] min-w-[3px] flex-1 rounded-sm bg-slate-200 dark:bg-slate-700'
+                : 'h-[100%] max-w-[6px] min-w-[3px] flex-1 rounded-sm bg-slate-200 dark:bg-slate-700 sm:max-w-[8px] sm:min-w-[4px]'}
             />
           ))}
 
@@ -173,9 +188,11 @@ export function UptimeBar30d({ days, ratingLevel = 3, maxBars = 30, timeZone, on
               key={d.day_start_at}
               type="button"
               aria-label={`Uptime ${formatDay(d.day_start_at, timeZone)}`}
-              className={`flex-1 min-w-[3px] sm:min-w-[4px] max-w-[6px] sm:max-w-[8px] rounded-sm transition-all duration-150
+              className={`${compact
+                ? 'max-w-[6px] min-w-[3px] flex-1'
+                : 'max-w-[6px] min-w-[3px] flex-1 sm:max-w-[8px] sm:min-w-[4px]'} rounded-sm transition-all duration-150
                 ${getUptimeColorClasses(pct, ratingLevel)}
-                hover:scale-y-110 hover:shadow-md ${tooltip?.day.day_start_at === d.day_start_at ? getUptimeGlow(pct, ratingLevel) : ''}`}
+                ${compact ? 'hover:scale-y-105' : 'hover:scale-y-110'} hover:shadow-md ${tooltip?.day.day_start_at === d.day_start_at ? getUptimeGlow(pct, ratingLevel) : ''}`}
               style={{ height: '100%' }}
               onMouseEnter={(e) => handleMouseEnter(d, e)}
               onMouseLeave={() => setTooltip(null)}

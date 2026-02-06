@@ -149,17 +149,20 @@ function getAvailabilityPillClasses(uptimePct: number, level: 1 | 2 | 3 | 4 | 5)
 
 function MonitorCard({ monitor, onSelect, onDayClick, timeZone }: { monitor: PublicMonitor; onSelect: () => void; onDayClick: (dayStartAt: number) => void; timeZone: string }) {
   const uptime30d = monitor.uptime_30d;
+  const checkedAt = monitor.last_checked_at
+    ? (timeZone ? formatTime(monitor.last_checked_at, { timeZone }) : formatTime(monitor.last_checked_at))
+    : 'Never checked';
 
   return (
-    <Card hover onClick={onSelect} className="p-4 sm:p-5">
-      <div className="flex items-start justify-between mb-3 sm:mb-4">
-        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-          <StatusDot status={monitor.status} pulse={monitor.status === 'down'} />
+    <Card hover onClick={onSelect} className="p-3.5 sm:p-4">
+      <div className="mb-2.5 flex items-start justify-between gap-2">
+        <div className="min-w-0 flex items-center gap-2.5">
+          <StatusDot status={monitor.status} pulse={monitor.status === 'down'} size="sm" />
           <div className="min-w-0">
-            <h3 className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+            <h3 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100 sm:text-[15px]">
               {monitor.name}
             </h3>
-            <span className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
               {monitor.type}
             </span>
           </div>
@@ -167,11 +170,11 @@ function MonitorCard({ monitor, onSelect, onDayClick, timeZone }: { monitor: Pub
         <Badge variant={getStatusBadgeVariant(monitor.status)}>{monitor.status}</Badge>
       </div>
 
-      <div className="mb-2 flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
-        <span className="uppercase tracking-wide">Availability (30d)</span>
+      <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+        <span className="uppercase tracking-wide">Availability</span>
         {uptime30d ? (
           <span
-            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium tabular-nums ${getAvailabilityPillClasses(uptime30d.uptime_pct, monitor.uptime_rating_level)}`}
+            className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${getAvailabilityPillClasses(uptime30d.uptime_pct, monitor.uptime_rating_level)}`}
             title="Average availability over the last 30 days"
           >
             <span
@@ -190,23 +193,24 @@ function MonitorCard({ monitor, onSelect, onDayClick, timeZone }: { monitor: Pub
         maxBars={30}
         timeZone={timeZone}
         onDayClick={onDayClick}
+        density="compact"
       />
 
-      <div className="mt-3 sm:mt-4">
-        <div className="mb-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+      <div className="mt-2.5">
+        <div className="mb-1.5 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
           <span className="uppercase tracking-wide">Heartbeat</span>
-          <span>Last {HEARTBEAT_BARS} checks</span>
+          <span>Last {HEARTBEAT_BARS}</span>
         </div>
-        <HeartbeatBar heartbeats={monitor.heartbeats ?? []} maxBars={HEARTBEAT_BARS} />
+        <HeartbeatBar
+          heartbeats={monitor.heartbeats ?? []}
+          maxBars={HEARTBEAT_BARS}
+          density="compact"
+        />
       </div>
 
-      <div className="mt-3 sm:mt-4 flex flex-wrap items-center justify-between gap-2 text-sm">
-        <div className="flex items-center gap-3 sm:gap-4">
-          {monitor.last_latency_ms !== null && (
-            <span className="text-slate-500 dark:text-slate-400">{monitor.last_latency_ms}ms</span>
-          )}
-        </div>
-        <span className="text-slate-400 dark:text-slate-500 text-xs">{monitor.last_checked_at ? (timeZone ? formatTime(monitor.last_checked_at, { timeZone }) : formatTime(monitor.last_checked_at)) : 'Never checked'}</span>
+      <div className="mt-2.5 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+        <span className="tabular-nums">{monitor.last_latency_ms !== null ? `${monitor.last_latency_ms}ms` : '-'}</span>
+        <span className="truncate text-slate-400 dark:text-slate-500">{checkedAt}</span>
       </div>
     </Card>
   );
@@ -439,23 +443,23 @@ function StatusPageSkeleton() {
 
         <section>
           <div className="h-6 w-24 bg-slate-200 dark:bg-slate-700 rounded mb-4" />
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             {Array.from({ length: 6 }).map((_, idx) => (
-              <Card key={idx} className="p-4 sm:p-5">
-                <div className="flex items-start justify-between mb-3 sm:mb-4">
-                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-                    <div className="h-3 w-3 bg-slate-200 dark:bg-slate-700 rounded-full" />
+              <Card key={idx} className="p-3.5 sm:p-4">
+                <div className="mb-2.5 flex items-start justify-between">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <div className="h-3 w-3 rounded-full bg-slate-200 dark:bg-slate-700" />
                     <div className="min-w-0">
-                      <div className="h-5 w-40 bg-slate-200 dark:bg-slate-700 rounded mb-2" />
-                      <div className="h-3 w-12 bg-slate-200 dark:bg-slate-700 rounded" />
+                      <div className="mb-1.5 h-4 w-32 rounded bg-slate-200 dark:bg-slate-700" />
+                      <div className="h-3 w-12 rounded bg-slate-200 dark:bg-slate-700" />
                     </div>
                   </div>
-                  <div className="h-6 w-16 bg-slate-200 dark:bg-slate-700 rounded-full" />
+                  <div className="h-5 w-14 rounded-full bg-slate-200 dark:bg-slate-700" />
                 </div>
-                <div className="h-6 bg-slate-200 dark:bg-slate-700 rounded mb-3" />
+                <div className="mb-2.5 h-5 rounded bg-slate-200 dark:bg-slate-700" />
                 <div className="flex justify-between">
-                  <div className="h-4 w-24 bg-slate-200 dark:bg-slate-700 rounded" />
-                  <div className="h-4 w-24 bg-slate-200 dark:bg-slate-700 rounded" />
+                  <div className="h-3.5 w-20 rounded bg-slate-200 dark:bg-slate-700" />
+                  <div className="h-3.5 w-24 rounded bg-slate-200 dark:bg-slate-700" />
                 </div>
               </Card>
             ))}
@@ -696,7 +700,7 @@ export function StatusPage() {
         {/* Monitors */}
         <section>
           <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">Services</h3>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             {data.monitors.map((monitor) => (
               <MonitorCard
                 key={monitor.id}
