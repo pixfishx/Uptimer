@@ -62,8 +62,8 @@ function Tooltip({ heartbeat, position }: TooltipProps) {
       className="fixed z-50 px-3 py-2 text-xs bg-slate-900 dark:bg-slate-700 text-white rounded-lg shadow-lg pointer-events-none animate-fade-in"
       style={{
         left: position.x,
-        top: position.y - 70,
-        transform: 'translateX(-50%)',
+        top: position.y,
+        transform: 'translate(-50%, -100%) translateY(-8px)',
       }}
     >
       <div className="font-medium mb-1">{formatTime(heartbeat.checked_at)}</div>

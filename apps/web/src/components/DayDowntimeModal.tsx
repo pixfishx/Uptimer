@@ -36,6 +36,7 @@ type ContextInterval = {
 type ContextGroup = {
   start: number;
   end: number;
+  kind: 'maintenance' | 'incident';
   label: string;
   downtime: DayInterval[];
 };
@@ -88,7 +89,7 @@ function groupDowntimeByContext(
       .map((d) => clipInterval(d, ctx))
       .filter((x): x is DayInterval => x !== null);
     if (overlappedDowntime.length === 0) continue;
-    groups.push({ start: ctx.start, end: ctx.end, label: ctx.label, downtime: overlappedDowntime });
+    groups.push({ start: ctx.start, end: ctx.end, kind: ctx.kind, label: ctx.label, downtime: overlappedDowntime });
   }
 
   const outside: DayInterval[] = [];
@@ -183,30 +184,22 @@ export function DayDowntimeModal({
     [dayStartAt, nowSec, maintenanceWindows, incidents],
   );
 
-  const maintenanceContext = useMemo(
-    () => contextIntervals.filter((it) => it.kind === 'maintenance'),
-    [contextIntervals],
-  );
-
-  const incidentContext = useMemo(
-    () => contextIntervals.filter((it) => it.kind === 'incident'),
-    [contextIntervals],
-  );
-
-  const maintenanceGrouped = useMemo(
-    () => groupDowntimeByContext(intervals, maintenanceContext),
-    [intervals, maintenanceContext],
-  );
-
-  const incidentGrouped = useMemo(
-    () => groupDowntimeByContext(intervals, incidentContext),
-    [intervals, incidentContext],
-  );
-
   const allGrouped = useMemo(
     () => groupDowntimeByContext(intervals, contextIntervals),
     [intervals, contextIntervals],
   );
+
+  // Build a unified time-sorted list: context groups + outside intervals.
+  const sortedEntries = useMemo(() => {
+    const entries: Array<{ kind: 'group'; group: ContextGroup } | { kind: 'outside'; interval: DayInterval }> = [];
+    for (const g of allGrouped.groups) entries.push({ kind: 'group', group: g });
+    for (const it of allGrouped.outside) entries.push({ kind: 'outside', interval: it });
+    return entries.sort((a, b) => {
+      const aStart = a.kind === 'group' ? a.group.start : a.interval.start;
+      const bStart = b.kind === 'group' ? b.group.start : b.interval.start;
+      return aStart - bStart;
+    });
+  }, [allGrouped]);
 
   return (
     <div
@@ -238,95 +231,68 @@ export function DayDowntimeModal({
           <div className="text-slate-500 dark:text-slate-400">No downtime recorded for this day.</div>
         ) : (
           <div className="space-y-3">
-            {maintenanceGrouped.groups.map((g, idx) => (
-              <div
-                key={`group-${idx}`}
-                className="p-3 rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50/40 dark:bg-blue-500/10"
-              >
-                <div className="flex items-center justify-between gap-4 mb-2">
-                  <div className="text-sm font-medium text-blue-700 dark:text-blue-300">Maintenance</div>
-                  <div className="text-xs text-blue-700/80 dark:text-blue-300/80 tabular-nums">
-                    {formatClock(g.start, timeZone)} – {formatClock(g.end, timeZone)}
+            {sortedEntries.map((entry, idx) => {
+              if (entry.kind === 'outside') {
+                const it = entry.interval;
+                return (
+                  <div
+                    key={`outside-${idx}`}
+                    className="flex items-center justify-between gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50"
+                  >
+                    <div className="text-sm text-slate-700 dark:text-slate-200">
+                      {formatClock(it.start, timeZone)} – {formatClock(it.end, timeZone)}
+                    </div>
+                    <div className="text-sm font-medium text-slate-900 dark:text-slate-100 tabular-nums">
+                      {formatSec(it.end - it.start)}
+                    </div>
+                  </div>
+                );
+              }
+
+              const g = entry.group;
+              const isMaintenance = g.kind === 'maintenance';
+              return (
+                <div
+                  key={`group-${idx}`}
+                  className={isMaintenance
+                    ? 'p-3 rounded-lg border border-blue-200 dark:border-blue-500/30 bg-blue-50/40 dark:bg-blue-500/10'
+                    : 'p-3 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50/40 dark:bg-amber-500/10'}
+                >
+                  <div className="flex items-center justify-between gap-4 mb-2">
+                    <div className={`text-sm font-medium ${isMaintenance ? 'text-blue-700 dark:text-blue-300' : 'text-amber-800 dark:text-amber-200'}`}>
+                      {isMaintenance ? 'Maintenance' : 'Incident'}
+                    </div>
+                    <div className={`text-xs tabular-nums ${isMaintenance ? 'text-blue-700/80 dark:text-blue-300/80' : 'text-amber-800/80 dark:text-amber-200/80'}`}>
+                      {formatClock(g.start, timeZone)} – {formatClock(g.end, timeZone)}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${contextTagClasses(g.kind)}`}
+                    >
+                      {g.label}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {g.downtime.map((it, didx) => (
+                      <div
+                        key={`d-${didx}`}
+                        className="flex items-center justify-between gap-4 p-3 rounded-lg bg-white/70 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700"
+                      >
+                        <div className="text-sm text-slate-700 dark:text-slate-200">
+                          {formatClock(it.start, timeZone)} – {formatClock(it.end, timeZone)}
+                        </div>
+                        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 tabular-nums">
+                          {formatSec(it.end - it.start)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
-
-                <div className="flex flex-wrap gap-2 mb-3">
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${contextTagClasses('maintenance')}`}
-                  >
-                    {g.label}
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {g.downtime.map((it, didx) => (
-                    <div
-                      key={`d-${didx}`}
-                      className="flex items-center justify-between gap-4 p-3 rounded-lg bg-white/70 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700"
-                    >
-                      <div className="text-sm text-slate-700 dark:text-slate-200">
-                        {formatClock(it.start, timeZone)} – {formatClock(it.end, timeZone)}
-                      </div>
-                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 tabular-nums">
-                        {formatSec(it.end - it.start)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {incidentGrouped.groups.map((g, idx) => (
-              <div
-                key={`incident-group-${idx}`}
-                className="p-3 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50/40 dark:bg-amber-500/10"
-              >
-                <div className="flex items-center justify-between gap-4 mb-2">
-                  <div className="text-sm font-medium text-amber-800 dark:text-amber-200">Incident</div>
-                  <div className="text-xs text-amber-800/80 dark:text-amber-200/80 tabular-nums">
-                    {formatClock(g.start, timeZone)} – {formatClock(g.end, timeZone)}
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 mb-3">
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${contextTagClasses('incident')}`}
-                  >
-                    {g.label}
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {g.downtime.map((it, didx) => (
-                    <div
-                      key={`incident-d-${didx}`}
-                      className="flex items-center justify-between gap-4 p-3 rounded-lg bg-white/70 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700"
-                    >
-                      <div className="text-sm text-slate-700 dark:text-slate-200">
-                        {formatClock(it.start, timeZone)} – {formatClock(it.end, timeZone)}
-                      </div>
-                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 tabular-nums">
-                        {formatSec(it.end - it.start)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-
-            {allGrouped.outside.map((it, idx) => (
-              <div
-                key={`outside-${idx}`}
-                className="flex items-center justify-between gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50"
-              >
-                <div className="text-sm text-slate-700 dark:text-slate-200">
-                  {formatClock(it.start, timeZone)} – {formatClock(it.end, timeZone)}
-                </div>
-                <div className="text-sm font-medium text-slate-900 dark:text-slate-100 tabular-nums">
-                  {formatSec(it.end - it.start)}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
