@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { ApiError, fetchPublicMaintenanceWindows, fetchStatus } from '../api/client';
@@ -22,7 +22,10 @@ export function MaintenanceHistoryPage() {
 
   const statusQuery = useQuery({ queryKey: ['status'], queryFn: fetchStatus });
   const timeZone = statusQuery.data?.site_timezone ?? 'UTC';
-  const monitorNames = new Map((statusQuery.data?.monitors ?? []).map((m) => [m.id, m.name] as const));
+  const monitorNames = useMemo(
+    () => new Map((statusQuery.data?.monitors ?? []).map((m) => [m.id, m.name] as const)),
+    [statusQuery.data?.monitors],
+  );
 
   const query = useQuery({
     queryKey: ['public-maintenance-windows', 'history', cursor],

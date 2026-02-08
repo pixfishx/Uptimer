@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import type { UptimeDay, UptimeRatingLevel } from '../api/types';
 import { formatDate } from '../utils/datetime';
@@ -166,6 +167,7 @@ export function UptimeBar30d({
   return (
     <>
       <div
+        data-bar-chart
         className={compact
           ? 'flex h-5 items-end gap-[2px] sm:h-6'
           : 'flex h-6 items-end gap-[2px] sm:h-8 sm:gap-[3px]'}
@@ -205,13 +207,14 @@ export function UptimeBar30d({
         })}
       </div>
 
-      {tooltip && (
+      {tooltip && createPortal(
         <Tooltip
           day={tooltip.day}
           position={tooltip.position}
           ratingLevel={ratingLevel}
           timeZone={timeZone}
-        />
+        />,
+        document.body,
       )}
     </>
   );

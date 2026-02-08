@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { Incident, MaintenanceWindow, Outage } from '../api/types';
 import { Button, MODAL_OVERLAY_CLASS, MODAL_PANEL_CLASS } from './ui';
@@ -169,7 +169,7 @@ export function DayDowntimeModal({
   onClose: () => void;
   timeZone?: string;
 }) {
-  const nowSec = Math.floor(Date.now() / 1000);
+  const [nowSec] = useState(() => Math.floor(Date.now() / 1000));
 
   const intervals = useMemo(
     () => computeDayDowntimeIntervals(dayStartAt, outages, nowSec),
@@ -201,6 +201,11 @@ export function DayDowntimeModal({
   const incidentGrouped = useMemo(
     () => groupDowntimeByContext(intervals, incidentContext),
     [intervals, incidentContext],
+  );
+
+  const allGrouped = useMemo(
+    () => groupDowntimeByContext(intervals, contextIntervals),
+    [intervals, contextIntervals],
   );
 
   return (
@@ -309,7 +314,7 @@ export function DayDowntimeModal({
               </div>
             ))}
 
-            {maintenanceGrouped.outside.map((it, idx) => (
+            {allGrouped.outside.map((it, idx) => (
               <div
                 key={`outside-${idx}`}
                 className="flex items-center justify-between gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50"

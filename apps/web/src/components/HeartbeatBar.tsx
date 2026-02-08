@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { Heartbeat, CheckStatus } from '../api/types';
 
 interface HeartbeatBarProps {
@@ -96,13 +97,14 @@ export function HeartbeatBar({ heartbeats, maxBars = 60, density = 'default' }: 
   return (
     <>
       <div
+        data-bar-chart
         className={compact
           ? 'flex h-5 items-end gap-[2px] sm:h-6'
           : 'flex h-6 items-end gap-[2px] sm:h-8 sm:gap-[3px]'}
       >
-        {reversed.map((hb, idx) => (
+        {reversed.map((hb) => (
           <div
-            key={idx}
+            key={hb.checked_at}
             role="img"
             aria-label={`${statusToAccessibleLabel(hb.status)} ${formatTime(hb.checked_at)}${hb.latency_ms !== null ? ` ${hb.latency_ms}ms` : ''}`}
             className={`${compact
@@ -125,7 +127,7 @@ export function HeartbeatBar({ heartbeats, maxBars = 60, density = 'default' }: 
             />
           ))}
       </div>
-      {tooltip && <Tooltip heartbeat={tooltip.heartbeat} position={tooltip.position} />}
+      {tooltip && createPortal(<Tooltip heartbeat={tooltip.heartbeat} position={tooltip.position} />, document.body)}
     </>
   );
 }

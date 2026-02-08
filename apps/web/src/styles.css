@@ -365,9 +365,10 @@ a {
     min-width: 44px;
   }
 
-  /* Smaller buttons in tables */
+  /* Smaller buttons in tables and bar charts */
   table button,
-  table a {
+  table a,
+  [data-bar-chart] button {
     min-height: 36px;
     min-width: auto;
   }
